@@ -245,62 +245,93 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- 5. FUNÇÕES DE CARREGAMENTO DE DADOS ---
   async function carregarDadosAtuais(sistemaId) {
     if (!sistemaId) return;
+
+    // Seleciona as colunas dos cards
+    const colUmidadeSolo = document.getElementById("colUmidadeSolo");
+    const colTemperaturaAr = document.getElementById("colTemperaturaAr");
+    const colET = document.getElementById("colET");
+    const colUmidadeAr = document.getElementById("colUmidadeAr");
+    const colStatusBomba = document.getElementById("colStatusBomba"); // Geralmente sempre visível
+
     try {
       const dados = await fetchData(`/api/sistemas/${sistemaId}/dados-atuais`);
+
+      // Função auxiliar para mostrar/ocultar coluna e atualizar valor
+      function atualizarCard(
+        colElement,
+        dataKey,
+        valorElement,
+        unidadePadrao = "",
+        casasDecimais = 1
+      ) {
+        const dado = dados ? dados[dataKey] : undefined; // Pega o dado específico
+        if (dado?.valor !== undefined && dado?.valor !== null) {
+          // Tem dado válido: mostra a coluna e atualiza o valor
+          colElement.classList.remove("d-none");
+          valorElement.textContent = `${parseFloat(dado.valor).toFixed(
+            casasDecimais
+          )} ${dado.unidade || unidadePadrao}`;
+          return true; // Indica que o card está visível
+        } else {
+          // Não tem dado válido: oculta a coluna e mostra '--'
+          colElement.classList.add("d-none");
+          valorElement.textContent = `-- ${unidadePadrao}`;
+          return false; // Indica que o card está oculto
+        }
+      }
+
       if (!dados) {
-        // Limpa os campos se não houver dados
-        valorUmidadeSoloEl.textContent = "-- %";
-        valorTemperaturaArEl.textContent = "-- °C";
-        valorUmidadeArEl.textContent = "-- %";
-        valorETEl.textContent = "--";
-        statusBombaEl.textContent = "Indisponível";
+        // Se a API falhou completamente, oculta todos os cards de sensores
+        colUmidadeSolo.classList.add("d-none");
+        colTemperaturaAr.classList.add("d-none");
+        colET.classList.add("d-none");
+        colUmidadeAr.classList.add("d-none");
+        // Mantém o status da bomba visível, mas com erro
+        valorUmidadeSoloEl.textContent = "Erro";
+        valorTemperaturaArEl.textContent = "Erro";
+        valorETEl.textContent = "Erro";
+        valorUmidadeArEl.textContent = "Erro";
+        statusBombaEl.textContent = "Erro";
         cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
         return;
       }
 
-      // *** MODIFICADO PARA USAR NOMES MAPEADOS ***
-      // Usar os nomes camelCase retornados pela API (ex: umidadeDoSolo, temperaturaDoAr)
-      valorUmidadeSoloEl.textContent = `${
-        dados.umidadeDoSolo?.valor !== undefined
-          ? parseFloat(dados.umidadeDoSolo.valor).toFixed(1)
-          : "--"
-      } ${dados.umidadeDoSolo?.unidade || "%"}`; // Mostra unidade se disponível
+      // Atualiza cada card individualmente
+      atualizarCard(colUmidadeSolo, "umidadeDoSolo", valorUmidadeSoloEl, "%");
+      atualizarCard(
+        colTemperaturaAr,
+        "temperaturaDoAr",
+        valorTemperaturaArEl,
+        "°C"
+      );
+      atualizarCard(colET, "evapotranspiracao", valorETEl, "", 2); // 2 casas decimais para ET
+      atualizarCard(colUmidadeAr, "umidadeDoAr", valorUmidadeArEl, "%");
 
-      valorTemperaturaArEl.textContent = `${
-        dados.temperaturaDoAr?.valor !== undefined
-          ? parseFloat(dados.temperaturaDoAr.valor).toFixed(1)
-          : "--"
-      } ${dados.temperaturaDoAr?.unidade || "°C"}`;
-
-      valorUmidadeArEl.textContent = `${
-        dados.umidadeDoAr?.valor !== undefined
-          ? parseFloat(dados.umidadeDoAr.valor).toFixed(1)
-          : "--"
-      } ${dados.umidadeDoAr?.unidade || "%"}`;
-
-      valorETEl.textContent = `${
-        dados.evapotranspiracao?.valor !== undefined
-          ? parseFloat(dados.evapotranspiracao.valor).toFixed(2)
-          : "--"
-      }`; // ET não costuma ter unidade visível
-
-      // Status da bomba (sem alteração)
+      // --- Status da Bomba (lógica separada, pois geralmente queremos sempre mostrá-lo) ---
+      colStatusBomba.classList.remove("d-none"); // Garante que a coluna da bomba esteja visível
       cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
       if (dados.statusBomba === "LIGAR") {
         statusBombaEl.textContent = "Ligada";
         cardStatusBombaEl.classList.add("status-ligada");
-      } else {
+      } else if (dados.statusBomba === "DESLIGAR") {
         statusBombaEl.textContent = "Desligada";
         cardStatusBombaEl.classList.add("status-desligada");
+      } else {
+        statusBombaEl.textContent = "--"; // Caso não venha LIGAR ou DESLIGAR
       }
     } catch (error) {
       console.error("Erro ao carregar dados atuais:", error);
-      // Pode ser útil limpar os campos em caso de erro também
+      // Em caso de erro na requisição, oculta e mostra mensagem de erro
+      colUmidadeSolo.classList.add("d-none");
+      colTemperaturaAr.classList.add("d-none");
+      colET.classList.add("d-none");
+      colUmidadeAr.classList.add("d-none");
       valorUmidadeSoloEl.textContent = "Erro";
       valorTemperaturaArEl.textContent = "Erro";
-      valorUmidadeArEl.textContent = "Erro";
       valorETEl.textContent = "Erro";
+      valorUmidadeArEl.textContent = "Erro";
       statusBombaEl.textContent = "Erro";
+      cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
     }
   }
 
