@@ -1,0 +1,55 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap");
+:root {
+  --cor-primaria: #2e7d32;
+  --cor-fundo: #f4f7f6;
+  --sombra-card: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+body {
+  font-family: "Poppins", sans-serif;
+  background-color: var(--cor-fundo);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem 0;
+}
+.auth-container {
+  width: 100%;
+  max-width: 450px;
+  padding: 2.5rem;
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: var(--sombra-card);
+}
+.auth-title {
+  color: var(--cor-primaria);
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+.auth-title i {
+  margin-right: 8px;
+}
+.btn-primary {
+  background-color: var(--cor-primaria);
+  border-color: var(--cor-primaria);
+  padding: 0.75rem;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: transform 0.2s ease;
+}
+.btn-primary:hover {
+  transform: scale(1.03);
+  background-color: #276a2a;
+  border-color: #276a2a;
+}
+.form-control:focus {
+  border-color: #66bb6a;
+  box-shadow: 0 0 0 0.25rem rgba(46, 125, 50, 0.25);
+}
+a {
+  color: var(--cor-primaria);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
