@@ -34,7 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusBombaEl = document.getElementById("statusBomba");
   const cardStatusBombaEl = document.getElementById("cardStatusBomba");
   const tabelaEventosEl = document.getElementById("tabelaEventos");
-  const ctx = document.getElementById("graficoHistorico").getContext("ctx");
+  const ctx = document.getElementById("graficoHistorico").getContext("2d");
   let graficoHistorico;
   const modalAdicionarSistemaEl = document.getElementById(
     "modalAdicionarSistema"
@@ -342,112 +342,127 @@ document.addEventListener("DOMContentLoaded", () => {
         `/api/sistemas/${sistemaId}/dados-historicos`
       );
       if (!dados || dados.length === 0) {
-        console.log("Sem dados históricos para exibir.");
-        if (graficoHistorico) graficoHistorico.destroy(); // Limpa gráfico antigo se houver
-        // Opcional: Mostrar uma mensagem no canvas
+        if (graficoHistorico) graficoHistorico.destroy();
         return;
       }
 
-      const labels = dados.map((d) =>
-        new Date(d.timestamp).toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      );
+      // Configurações iniciais do gráfico
+      const graficoOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            // Define a escala X (tempo)
+            type: "time",
+            time: {
+              tooltipFormat: "HH:mm",
+              displayFormats: {
+                hour: "HH:mm",
+                minute: "HH:mm",
+              },
+            },
+            title: { display: true, text: "Hora" },
+          },
+        },
+      };
 
-      // *** MODIFICADO PARA USAR NOMES MAPEADOS ***
-      // Gera datasets dinamicamente baseados nos dados recebidos
+      // Cria labels a partir do timestamp (formata como hora:minuto)
+      const labels = dados.map((d) => {
+        const ts = d.timestamp || d.time || d.created_at;
+        const dt = ts ? new Date(ts) : null;
+        return dt
+          ? dt.toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+          : "";
+      });
+
       const datasets = [];
       const cores = [
-        "rgba(54, 162, 235, 1)",
-        "rgba(255, 99, 132, 1)",
-        "rgba(75, 192, 192, 1)",
-        "rgba(255, 206, 86, 1)",
-        "rgba(153, 102, 255, 1)",
-      ]; // Cores para os gráficos
+        "#3e95cd",
+        "#8e5ea2",
+        "#3cba9f",
+        "#e8c3b9",
+        "#c45850",
+        "#ff6384",
+        "#36a2eb",
+        "#ffcd56",
+      ];
       let corIndex = 0;
       let yAxisCount = 0;
 
-      // Descobre quais chaves de dados existem (exceto timestamp)
+      // Determina as chaves de dados (remove timestamp/time)
       const chavesDeDados =
         dados.length > 0
-          ? Object.keys(dados[0]).filter((k) => k !== "timestamp")
+          ? Object.keys(dados[0]).filter(
+              (k) => k !== "timestamp" && k !== "time" && k !== "created_at"
+            )
           : [];
 
       chavesDeDados.forEach((chave) => {
-        // Tenta obter a unidade do primeiro ponto que tem essa chave (pode ser melhorado buscando na config de mapeamento)
-        const primeiroDadoComChave = dados.find(
-          (d) => d[chave] !== undefined && d[chave] !== null
-        );
-        let unidade = "";
-        if (primeiroDadoComChave) {
-          // Assumindo que a API /dados-atuais retorna a unidade junto com o valor { valor: X, unidade: 'Y'}
-          // E que a API /dados-historicos foi ajustada para retornar algo similar ou só o valor
-          // Se a API /dados-historicos SÓ retorna o valor, precisamos buscar a unidade de outro lugar (mapeamento)
-          // Por simplicidade, vamos assumir que a unidade é inferida ou padrão
-          if (chave.toLowerCase().includes("temperatura")) unidade = "°C";
-          else if (chave.toLowerCase().includes("umidade")) unidade = "%";
-        }
-
-        const yAxisID = yAxisCount === 0 ? "y" : `y${yAxisCount}`; // Usa 'y' para o primeiro, 'y1', 'y2'... para os seguintes
-        const position = yAxisCount % 2 === 0 ? "left" : "right"; // Alterna eixos left/right
-
-        datasets.push({
-          label: `${chave
-            .replace(/([A-Z])/g, " $1")
-            .replace(/^./, (str) => str.toUpperCase())} (${unidade})`, // Ex: "Umidade Do Solo (%)"
-          data: dados.map((d) => d[chave]), // Pega os valores da chave atual
-          borderColor: cores[corIndex % cores.length],
-          yAxisID: yAxisID,
-          tension: 0.1,
+        // Extrai valores numéricos por ponto no tempo
+        const valores = dados.map((item) => {
+          const val = item[chave];
+          if (val === undefined || val === null) return null;
+          if (typeof val === "object" && val.valor !== undefined)
+            return Number(val.valor);
+          return Number(val);
         });
 
-        // Adiciona a configuração da escala para este dataset
-        // (Será adicionado às options do Chart mais abaixo)
+        // Tenta determinar a unidade a partir do primeiro item que contenha objeto com unidade
+        let unidade = "";
+        for (let i = 0; i < dados.length; i++) {
+          const v = dados[i][chave];
+          if (v !== undefined && v !== null) {
+            if (typeof v === "object" && v.unidade) {
+              unidade = v.unidade;
+              break;
+            }
+          }
+        }
+
+        const yAxisID = `y${yAxisCount}`;
+        const color = cores[corIndex % cores.length];
+        const position = yAxisCount % 2 === 0 ? "left" : "right";
+
+        // Adiciona configuração da escala Y específica para este dataset
         graficoOptions.scales[yAxisID] = {
+          type: "linear",
+          display: true,
           position: position,
-          title: {
-            display: true,
-            text: `${chave
-              .replace(/([A-Z])/g, " $1")
-              .replace(/^./, (str) => str.toUpperCase())} (${unidade})`,
-          },
-          // Não desenha a grade para eixos > 0 para não poluir
+          title: { display: !!unidade, text: unidade || chave },
           grid: { drawOnChartArea: yAxisCount === 0 },
         };
+
+        datasets.push({
+          label: unidade ? `${chave} (${unidade})` : chave,
+          data: valores,
+          borderColor: color,
+          backgroundColor: color,
+          fill: false,
+          tension: 0.2,
+          yAxisID: yAxisID,
+          spanGaps: true,
+          pointRadius: 2,
+        });
 
         corIndex++;
         yAxisCount++;
       });
 
       if (graficoHistorico) {
-        graficoHistorico.destroy(); // Destroi o gráfico anterior
+        graficoHistorico.destroy();
       }
-
-      // Define as opções do gráfico dinamicamente
-      const graficoOptions = {
-        responsive: true,
-        maintainAspectRatio: false, // Permite controlar a altura pelo CSS do container
-        scales: {}, // Inicializa vazio, será preenchido acima
-      };
-
-      // Adiciona a escala X (tempo)
-      graficoOptions.scales.x = {
-        title: { display: true, text: "Hora" },
-      };
 
       graficoHistorico = new Chart(ctx, {
         type: "line",
         data: {
           labels,
-          datasets: datasets, // Usa os datasets gerados dinamicamente
+          datasets: datasets,
         },
-        options: graficoOptions, // Usa as opções geradas dinamicamente
+        options: graficoOptions,
       });
     } catch (error) {
       console.error("Erro ao desenhar gráfico:", error);
       if (graficoHistorico) graficoHistorico.destroy();
-      // Opcional: Mostrar erro no canvas
     }
   }
 
