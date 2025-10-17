@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const pool = require("../config/db");
+const pool = require("../config/db"); // Certifique-se que o caminho está correto
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
@@ -62,7 +62,7 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "E-mail ou senha incorretos." });
     const token = jwt.sign(
       { id: usuario.id, email: usuario.email },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET, // Certifique-se que JWT_SECRET está no seu .env
       { expiresIn: "8h" }
     );
     res.status(200).json({ message: "Login bem-sucedido!", token });
@@ -76,26 +76,40 @@ router.post("/login", async (req, res) => {
 const verificarToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.sendStatus(401);
+  if (!token) {
+    console.warn("Token não fornecido");
+    return res.status(401).json({ message: "Token não fornecido" });
+  }
   jwt.verify(token, process.env.JWT_SECRET, (err, usuario) => {
-    if (err) return res.sendStatus(403);
-    req.usuario = usuario;
+    if (err) {
+      console.error("Erro na verificação do token:", err);
+      return res.status(403).json({ message: "Token inválido ou expirado" });
+    }
+    req.usuario = usuario; // Adiciona os dados do usuário (id, email) ao request
     next();
   });
 };
-router.use(verificarToken);
+router.use(verificarToken); // Aplica o middleware a todas as rotas abaixo
 
 // --- ROTAS PROTEGIDAS ---
+
+// -- Sistemas de Irrigação --
 router.get("/sistemas", async (req, res) => {
   try {
     const usuario_id = req.usuario.id;
     const [sistemas] = await pool.query(
-      "SELECT id, nome_sistema, cultura_id_atual FROM Sistemas_Irrigacao WHERE usuario_id = ?",
+      `SELECT si.id, si.nome_sistema, si.cultura_id_atual, c.nome as nome_cultura
+       FROM Sistemas_Irrigacao si
+       LEFT JOIN Culturas c ON si.cultura_id_atual = c.id
+       WHERE si.usuario_id = ?`,
       [usuario_id]
     );
     res.json(sistemas);
   } catch (error) {
-    res.status(500).json({ message: "Erro interno no servidor." });
+    console.error("Erro ao buscar sistemas:", error);
+    res
+      .status(500)
+      .json({ message: "Erro interno no servidor ao buscar sistemas." });
   }
 });
 
@@ -105,13 +119,29 @@ router.post("/sistemas", async (req, res) => {
       nome_sistema,
       thingspeak_channel_id,
       thingspeak_read_apikey,
-      cultura_id_atual,
+      cultura_id_atual, // Pode ser null ou undefined
     } = req.body;
     const usuario_id = req.usuario.id;
-    if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey)
+
+    if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey) {
       return res
         .status(400)
-        .json({ message: "Todos os campos são obrigatórios." });
+        .json({
+          message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
+        });
+    }
+
+    // Validar se o thingspeak_channel_id já existe para evitar erro de UNIQUE
+    const [existente] = await pool.query(
+      "SELECT id FROM Sistemas_Irrigacao WHERE thingspeak_channel_id = ?",
+      [thingspeak_channel_id]
+    );
+    if (existente.length > 0) {
+      return res
+        .status(409)
+        .json({ message: "Este ID de canal ThingSpeak já está em uso." });
+    }
+
     const [result] = await pool.query(
       "INSERT INTO Sistemas_Irrigacao (usuario_id, nome_sistema, thingspeak_channel_id, thingspeak_read_apikey, cultura_id_atual) VALUES (?, ?, ?, ?, ?)",
       [
@@ -119,7 +149,7 @@ router.post("/sistemas", async (req, res) => {
         nome_sistema,
         thingspeak_channel_id,
         thingspeak_read_apikey,
-        cultura_id_atual || null,
+        cultura_id_atual || null, // Garante que seja NULL se não for fornecido
       ]
     );
     res.status(201).json({
@@ -127,7 +157,16 @@ router.post("/sistemas", async (req, res) => {
       sistemaId: result.insertId,
     });
   } catch (error) {
-    res.status(500).json({ message: "Erro interno no servidor." });
+    console.error("Erro ao cadastrar sistema:", error);
+    // Verifica erro específico de chave única (pode acontecer se a validação acima falhar por concorrência)
+    if (error.code === "ER_DUP_ENTRY" || error.errno === 1062) {
+      return res
+        .status(409)
+        .json({ message: "Este ID de canal ThingSpeak já está em uso." });
+    }
+    res
+      .status(500)
+      .json({ message: "Erro interno no servidor ao cadastrar sistema." });
   }
 });
 
@@ -135,8 +174,12 @@ router.get("/sistemas/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const usuario_id = req.usuario.id;
+    // Usando LEFT JOIN para trazer o nome da cultura junto
     const [[sistema]] = await pool.query(
-      "SELECT id, nome_sistema, thingspeak_channel_id, thingspeak_read_apikey FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
+      `SELECT si.*, c.nome as nome_cultura
+       FROM Sistemas_Irrigacao si
+       LEFT JOIN Culturas c ON si.cultura_id_atual = c.id
+       WHERE si.id = ? AND si.usuario_id = ?`,
       [id, usuario_id]
     );
     if (!sistema) {
@@ -146,6 +189,7 @@ router.get("/sistemas/:id", async (req, res) => {
     }
     res.json(sistema);
   } catch (error) {
+    console.error("Erro ao buscar detalhes do sistema:", error);
     res.status(500).json({ message: "Erro ao buscar detalhes do sistema." });
   }
 });
@@ -153,16 +197,45 @@ router.get("/sistemas/:id", async (req, res) => {
 router.put("/sistemas/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { nome_sistema, thingspeak_channel_id, thingspeak_read_apikey } =
-      req.body;
+    const {
+      nome_sistema,
+      thingspeak_channel_id,
+      thingspeak_read_apikey,
+      cultura_id_atual,
+      data_plantio,
+    } = req.body; // Adicionado cultura_id_atual e data_plantio
     const usuario_id = req.usuario.id;
 
+    if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey) {
+      return res
+        .status(400)
+        .json({
+          message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
+        });
+    }
+
+    // Validar se o thingspeak_channel_id já existe em OUTRO sistema
+    const [existente] = await pool.query(
+      "SELECT id FROM Sistemas_Irrigacao WHERE thingspeak_channel_id = ? AND id != ?",
+      [thingspeak_channel_id, id]
+    );
+    if (existente.length > 0) {
+      return res
+        .status(409)
+        .json({
+          message:
+            "Este ID de canal ThingSpeak já está em uso por outro sistema.",
+        });
+    }
+
     const [result] = await pool.query(
-      "UPDATE Sistemas_Irrigacao SET nome_sistema = ?, thingspeak_channel_id = ?, thingspeak_read_apikey = ? WHERE id = ? AND usuario_id = ?",
+      "UPDATE Sistemas_Irrigacao SET nome_sistema = ?, thingspeak_channel_id = ?, thingspeak_read_apikey = ?, cultura_id_atual = ?, data_plantio = ? WHERE id = ? AND usuario_id = ?",
       [
         nome_sistema,
         thingspeak_channel_id,
         thingspeak_read_apikey,
+        cultura_id_atual || null, // Garante NULL se não fornecido
+        data_plantio || null, // Garante NULL se não fornecido
         id,
         usuario_id,
       ]
@@ -176,7 +249,18 @@ router.put("/sistemas/:id", async (req, res) => {
     res.status(200).json({ message: "Sistema atualizado com sucesso!" });
   } catch (error) {
     console.error("Erro ao atualizar sistema:", error);
-    res.status(500).json({ message: "Erro interno no servidor." });
+    // Verifica erro específico de chave única
+    if (error.code === "ER_DUP_ENTRY" || error.errno === 1062) {
+      return res
+        .status(409)
+        .json({
+          message:
+            "Este ID de canal ThingSpeak já está em uso por outro sistema.",
+        });
+    }
+    res
+      .status(500)
+      .json({ message: "Erro interno no servidor ao atualizar sistema." });
   }
 });
 
@@ -185,6 +269,8 @@ router.delete("/sistemas/:id", async (req, res) => {
     const { id } = req.params;
     const usuario_id = req.usuario.id;
 
+    // A constraint ON DELETE CASCADE no banco de dados cuidará de apagar
+    // os mapeamentos, leituras, cálculos e eventos associados.
     const [result] = await pool.query(
       "DELETE FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [id, usuario_id]
@@ -198,10 +284,13 @@ router.delete("/sistemas/:id", async (req, res) => {
     res.status(200).json({ message: "Sistema excluído com sucesso!" });
   } catch (error) {
     console.error("Erro ao excluir sistema:", error);
-    res.status(500).json({ message: "Erro interno no servidor." });
+    res
+      .status(500)
+      .json({ message: "Erro interno no servidor ao excluir sistema." });
   }
 });
 
+// -- Culturas --
 router.get("/culturas", async (req, res) => {
   try {
     const [culturas] = await pool.query(
@@ -209,40 +298,28 @@ router.get("/culturas", async (req, res) => {
     );
     res.json(culturas);
   } catch (error) {
+    console.error("Erro ao buscar culturas:", error);
     res.status(500).json({ message: "Erro ao buscar culturas." });
   }
 });
 
-router.put("/sistemas/:sistemaId/cultura", async (req, res) => {
-  try {
-    const { sistemaId } = req.params;
-    const { cultura_id } = req.body;
-    const usuario_id = req.usuario.id;
-    const [result] = await pool.query(
-      "UPDATE Sistemas_Irrigacao SET cultura_id_atual = ? WHERE id = ? AND usuario_id = ?",
-      [cultura_id, sistemaId, usuario_id]
-    );
-    if (result.affectedRows === 0)
-      return res.status(404).json({
-        message: "Sistema não encontrado ou não pertence a este usuário.",
-      });
-    res
-      .status(200)
-      .json({ message: "Cultura do sistema atualizada com sucesso!" });
-  } catch (error) {
-    res.status(500).json({ message: "Erro interno no servidor." });
-  }
-});
+// Rota movida para PUT /sistemas/:id (mais RESTful)
+// router.put("/sistemas/:sistemaId/cultura", ...);
 
+// -- Comando Irrigação (ESP32) --
+// Esta rota é para o ESP32 buscar o comando pendente
 router.get("/comando/:sistemaId", async (req, res) => {
   try {
     const { sistemaId } = req.params;
+    // NÃO AUTENTICADA: O ESP32 pode não ter como enviar token facilmente.
+    // Considere adicionar alguma forma de autenticação aqui se necessário (API Key?)
     const [[sistema]] = await pool.query(
       "SELECT comando_irrigacao FROM Sistemas_Irrigacao WHERE id = ?",
       [sistemaId]
     );
     if (sistema) {
       res.json({ comando: sistema.comando_irrigacao });
+      // Reseta o comando para DESLIGAR após o ESP32 ler, SE o comando for LIGAR
       if (sistema.comando_irrigacao === "LIGAR") {
         await pool.query(
           "UPDATE Sistemas_Irrigacao SET comando_irrigacao = 'DESLIGAR' WHERE id = ?",
@@ -253,100 +330,309 @@ router.get("/comando/:sistemaId", async (req, res) => {
       res.status(404).json({ message: "Sistema não encontrado." });
     }
   } catch (error) {
+    console.error("Erro ao buscar comando para ESP:", error);
     res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
 
+// -- Comando Irrigação (Dashboard) --
+// Esta rota é para o DASHBOARD enviar um comando manual
 router.post("/sistemas/:sistemaId/comando", async (req, res) => {
   try {
     const { sistemaId } = req.params;
-    const { comando } = req.body;
-    const usuario_id = req.usuario.id;
-    const [result] = await pool.query(
+    const { comando } = req.body; // Espera 'LIGAR' ou 'DESLIGAR'
+    const usuario_id = req.usuario.id; // Autenticado
+
+    if (comando !== "LIGAR" && comando !== "DESLIGAR") {
+      return res
+        .status(400)
+        .json({ message: "Comando inválido. Use 'LIGAR' ou 'DESLIGAR'." });
+    }
+
+    // Verificar se o sistema pertence ao usuário
+    const [resultUpdate] = await pool.query(
       "UPDATE Sistemas_Irrigacao SET comando_irrigacao = ? WHERE id = ? AND usuario_id = ?",
       [comando, sistemaId, usuario_id]
     );
-    if (result.affectedRows === 0)
-      return res.status(404).json({ message: "Sistema não encontrado." });
+
+    if (resultUpdate.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({
+          message: "Sistema não encontrado ou não pertence a este usuário.",
+        });
+    }
+
+    // Registrar o evento de irrigação manual
     await pool.query(
-      "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo) VALUES (?, ?, ?)",
+      'INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, "timestamp") VALUES (?, ?, ?, NOW())', // Usando timestamp do DB
       [sistemaId, `${comando}_MANUAL`, "Acionamento via dashboard"]
     );
+
     res
       .status(200)
       .json({ message: `Comando ${comando} enviado com sucesso.` });
   } catch (error) {
+    console.error("Erro ao enviar comando manual:", error);
     res.status(500).json({ message: "Erro ao enviar comando manual." });
   }
 });
 
+// -- Dados Atuais --
 router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
   try {
     const { sistemaId } = req.params;
-    const usuario_id = req.usuario.id;
+    const usuario_id = req.usuario.id; // Autenticado
+
+    // Verifica se o sistema pertence ao usuário E pega o comando atual
     const [[sistema]] = await pool.query(
       "SELECT id, comando_irrigacao FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [sistemaId, usuario_id]
     );
-    if (!sistema)
-      return res.status(404).json({ message: "Sistema não encontrado." });
+    if (!sistema) {
+      return res
+        .status(404)
+        .json({
+          message: "Sistema não encontrado ou não pertence a este usuário.",
+        });
+    }
 
-    const sql = `SELECT mt.tipo_leitura, l.valor FROM Leituras l JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id WHERE (l.mapeamento_id, l.timestamp) IN (SELECT mapeamento_id, MAX(timestamp) FROM Leituras GROUP BY mapeamento_id) AND mt.sistema_id = ?;`;
-    const [rows] = await pool.query(sql, [sistemaId]);
-    const dadosFormatados = rows.reduce((acc, { tipo_leitura, valor }) => {
-      const key = toCamelCase(tipo_leitura);
-      acc[key] = { valor };
-      return acc;
-    }, {});
+    // Busca as últimas leituras de cada tipo para o sistema
+    const sql = `
+      SELECT mt.tipo_leitura, mt.unidade, l.valor, l.timestamp
+      FROM Leituras l
+      JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
+      WHERE mt.sistema_id = ?
+      AND (l.mapeamento_id, l.timestamp) IN (
+          SELECT mapeamento_id, MAX(timestamp)
+          FROM Leituras sub_l
+          JOIN Mapeamento_ThingSpeak sub_mt ON sub_l.mapeamento_id = sub_mt.id
+          WHERE sub_mt.sistema_id = ?
+          GROUP BY mapeamento_id
+      );
+    `;
+    const [rows] = await pool.query(sql, [sistemaId, sistemaId]); // Passa o ID duas vezes
+
+    // Formata os dados num objeto mais fácil de usar no frontend
+    const dadosFormatados = rows.reduce(
+      (acc, { tipo_leitura, unidade, valor, timestamp }) => {
+        const key = toCamelCase(tipo_leitura); // Ex: "temperaturaAmbiente"
+        acc[key] = {
+          valor: parseFloat(valor), // Converte para número
+          unidade: unidade,
+          timestamp: timestamp,
+        };
+        return acc;
+      },
+      {}
+    );
+
+    // Adiciona o status da bomba
     dadosFormatados.statusBomba = sistema.comando_irrigacao;
 
+    // Busca o último cálculo de ET0 (opcional)
     const [[ultimoET]] = await pool.query(
-      "SELECT valor_et_calculado FROM Calculos_ET WHERE sistema_id = ? ORDER BY timestamp_calculo DESC LIMIT 1",
+      "SELECT valor_et_calculado, timestamp_calculo FROM Calculos_ET WHERE sistema_id = ? ORDER BY timestamp_calculo DESC LIMIT 1",
       [sistemaId]
     );
     if (ultimoET) {
       dadosFormatados.evapotranspiracao = {
-        valor: ultimoET.valor_et_calculado,
+        valor: parseFloat(ultimoET.valor_et_calculado),
+        timestamp: ultimoET.timestamp_calculo,
       };
     }
+
     res.json(dadosFormatados);
   } catch (error) {
+    console.error("Erro ao buscar dados atuais:", error);
     res.status(500).json({ message: "Erro ao buscar dados atuais." });
   }
 });
 
+// -- Eventos de Irrigação --
 router.get("/sistemas/:sistemaId/eventos", async (req, res) => {
   try {
     const { sistemaId } = req.params;
-    const usuario_id = req.usuario.id;
+    const usuario_id = req.usuario.id; // Autenticado
+
+    // Verifica se o sistema pertence ao usuário
     const [[sistema]] = await pool.query(
       "SELECT id FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [sistemaId, usuario_id]
     );
-    if (!sistema)
-      return res.status(404).json({ message: "Sistema não encontrado." });
+    if (!sistema) {
+      return res
+        .status(404)
+        .json({
+          message: "Sistema não encontrado ou não pertence a este usuário.",
+        });
+    }
+
+    // Busca os últimos 10 eventos
     const [eventos] = await pool.query(
-      "SELECT * FROM Eventos_Irrigacao WHERE sistema_id = ? ORDER BY timestamp DESC LIMIT 10",
+      'SELECT id, acao, motivo, duracao_segundos, "timestamp" FROM Eventos_Irrigacao WHERE sistema_id = ? ORDER BY "timestamp" DESC LIMIT 10',
       [sistemaId]
     );
     res.json(eventos);
   } catch (error) {
+    console.error("Erro ao buscar eventos:", error);
     res.status(500).json({ message: "Erro ao buscar eventos." });
   }
 });
 
-router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
+// --- ROTAS DE MAPEAMENTO THINKSPEAK ---
+
+// ROTA PARA OBTER O MAPEAMENTO DE UM SISTEMA
+// (Adaptação da sua rota GET /sistemas/:id/mapeamento)
+router.get("/sistemas/:sistemaId/mapeamento", async (req, res) => {
   try {
-    const { sistemaId } = req.params;
-    const usuario_id = req.usuario.id;
+    const sistemaId = parseInt(req.params.sistemaId, 10);
+    const usuario_id = req.usuario.id; // Autenticado
+
+    if (isNaN(sistemaId)) {
+      return res.status(400).json({ message: "ID do sistema inválido" });
+    }
+
+    // Validação de segurança: verifica se o sistema pertence ao utilizador
     const [[sistema]] = await pool.query(
       "SELECT id FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [sistemaId, usuario_id]
     );
-    if (!sistema)
-      return res.status(404).json({ message: "Sistema não encontrado." });
-    const sql = `SELECT mt.tipo_leitura, l.valor, l.timestamp FROM Leituras l JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id WHERE mt.sistema_id = ? AND l.timestamp >= NOW() - INTERVAL 1 DAY ORDER BY l.timestamp ASC;`;
+    if (!sistema) {
+      return res
+        .status(404)
+        .json({
+          message: "Sistema não encontrado ou não pertence a este usuário.",
+        });
+    }
+
+    // Busca os mapeamentos existentes
+    const [mapeamentos] = await pool.query(
+      "SELECT field_number, tipo_leitura, unidade FROM Mapeamento_ThingSpeak WHERE sistema_id = ? ORDER BY field_number",
+      [sistemaId]
+    );
+    res.json(mapeamentos); // Retorna um array [{ field_number: 1, tipo_leitura: 'Temp', unidade: 'C' }, ...]
+  } catch (error) {
+    console.error(
+      `Erro ao buscar mapeamento para sistema ${req.params.sistemaId}:`,
+      error
+    );
+    res.status(500).json({ message: "Erro interno ao buscar mapeamento." });
+  }
+});
+
+// ROTA PARA ATUALIZAR O MAPEAMENTO DE UM SISTEMA
+// (Adaptação da sua rota PUT /sistemas/:id/mapeamento com melhorias)
+router.put("/sistemas/:sistemaId/mapeamento", async (req, res) => {
+  const sistemaId = parseInt(req.params.sistemaId, 10);
+  const usuario_id = req.usuario.id; // Autenticado
+  const mapeamentos = req.body.mapeamentos; // Espera um array no corpo: { mapeamentos: [{ field_number: 1, tipo_leitura: 'Temp', unidade: 'C' }, ...] }
+
+  if (isNaN(sistemaId)) {
+    return res.status(400).json({ message: "ID do sistema inválido" });
+  }
+  if (!Array.isArray(mapeamentos)) {
+    return res
+      .status(400)
+      .json({
+        message:
+          'Formato de dados inválido. Esperado um objeto com a chave "mapeamentos" contendo um array.',
+      });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection(); // Obter uma conexão para usar transação
+    await connection.beginTransaction();
+
+    // Validação de segurança (dentro da transação)
+    const [sistemas] = await connection.query(
+      "SELECT id FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
+      [sistemaId, usuario_id]
+    );
+    if (sistemas.length === 0) {
+      await connection.rollback(); // Desfaz antes de retornar erro
+      return res
+        .status(404)
+        .json({
+          message: "Sistema não encontrado ou não pertence a este usuário.",
+        });
+    }
+
+    // 1. Apaga os mapeamentos antigos para este sistema
+    await connection.query(
+      "DELETE FROM Mapeamento_ThingSpeak WHERE sistema_id = ?",
+      [sistemaId]
+    );
+
+    // 2. Insere os novos mapeamentos (apenas os que têm tipo_leitura definido e não é "Nenhum" ou vazio)
+    const novosMapeamentos = mapeamentos
+      .filter(
+        (map) =>
+          map &&
+          map.field_number &&
+          map.tipo_leitura &&
+          map.tipo_leitura.trim() !== "" &&
+          map.tipo_leitura.toLowerCase() !== "nenhum"
+      )
+      .map((map) => [
+        sistemaId,
+        map.field_number,
+        map.tipo_leitura.trim(),
+        map.unidade || null,
+      ]); // Trim para limpar espaços
+
+    if (novosMapeamentos.length > 0) {
+      await connection.query(
+        "INSERT INTO Mapeamento_ThingSpeak (sistema_id, field_number, tipo_leitura, unidade) VALUES ?",
+        [novosMapeamentos] // Passa o array de arrays diretamente
+      );
+    }
+
+    await connection.commit(); // Confirma a transação
+    res.status(200).json({ message: "Mapeamento atualizado com sucesso!" });
+  } catch (error) {
+    if (connection) await connection.rollback(); // Desfaz em caso de erro
+    console.error(
+      `Erro ao atualizar mapeamento para sistema ${sistemaId}:`,
+      error
+    );
+    res.status(500).json({ message: "Erro interno ao atualizar mapeamento." });
+  } finally {
+    if (connection) connection.release(); // Libera a conexão de volta para o pool
+  }
+});
+
+// -- Dados Históricos -- (Sua rota existente, parece OK)
+router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
+  try {
+    const { sistemaId } = req.params;
+    const usuario_id = req.usuario.id; // Autenticado
+
+    // Verifica se o sistema pertence ao usuário
+    const [[sistema]] = await pool.query(
+      "SELECT id FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
+      [sistemaId, usuario_id]
+    );
+    if (!sistema) {
+      return res
+        .status(404)
+        .json({
+          message: "Sistema não encontrado ou não pertence a este usuário.",
+        });
+    }
+
+    // Busca leituras do último dia
+    const sql = `
+      SELECT mt.tipo_leitura, l.valor, l.timestamp
+      FROM Leituras l
+      JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
+      WHERE mt.sistema_id = ? AND l.timestamp >= NOW() - INTERVAL 1 DAY
+      ORDER BY l.timestamp ASC;
+    `;
     const [leituras] = await pool.query(sql, [sistemaId]);
+
+    // Formata os dados agrupados por timestamp
     const dadosFormatados = [];
     const timestamps = [
       ...new Set(leituras.map((l) => l.timestamp.toISOString())),
@@ -358,12 +644,13 @@ router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
       );
       leiturasNessePonto.forEach((leitura) => {
         const key = toCamelCase(leitura.tipo_leitura);
-        point[key] = leitura.valor;
+        point[key] = parseFloat(leitura.valor); // Converte para número
       });
       dadosFormatados.push(point);
     });
     res.json(dadosFormatados);
   } catch (error) {
+    console.error("Erro ao buscar dados históricos:", error);
     res.status(500).json({ message: "Erro ao buscar dados históricos." });
   }
 });
