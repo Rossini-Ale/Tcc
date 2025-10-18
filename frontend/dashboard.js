@@ -342,107 +342,93 @@ document.addEventListener("DOMContentLoaded", () => {
         `/api/sistemas/${sistemaId}/dados-historicos`
       );
       if (!dados || dados.length === 0) {
-        if (graficoHistorico) graficoHistorico.destroy();
+        console.log("Sem dados históricos para exibir.");
+        if (graficoHistorico) graficoHistorico.destroy(); // Limpa gráfico antigo se houver
         return;
       }
 
-      // Configurações iniciais do gráfico
+      // ****** CONFIGURAÇÕES DO GRÁFICO (com type: 'time') ******
       const graficoOptions = {
         responsive: true,
         maintainAspectRatio: false,
         scales: {
           x: {
-            // Define a escala X (tempo)
-            type: "time",
+            type: "time", // <-- GARANTIR que é 'time'
             time: {
-              tooltipFormat: "HH:mm",
+              // Formatos de exibição no eixo X (ajuste conforme necessário)
+              tooltipFormat: "dd/MM HH:mm", // Formato na dica ao passar o mouse
               displayFormats: {
-                hour: "HH:mm",
-                minute: "HH:mm",
+                // minute: 'HH:mm',
+                hour: "HH:mm", // Mostrar apenas Hora:Minuto no eixo
               },
             },
             title: { display: true, text: "Hora" },
           },
+          // Escalas Y serão adicionadas dinamicamente abaixo
         },
       };
 
-      // Cria labels a partir do timestamp (formata como hora:minuto)
-      const labels = dados.map((d) => {
-        const ts = d.timestamp || d.time || d.created_at;
-        const dt = ts ? new Date(ts) : null;
-        return dt
-          ? dt.toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-          : "";
-      });
-
       const datasets = [];
       const cores = [
-        "#3e95cd",
-        "#8e5ea2",
-        "#3cba9f",
-        "#e8c3b9",
-        "#c45850",
-        "#ff6384",
-        "#36a2eb",
-        "#ffcd56",
+        "rgba(54, 162, 235, 1)",
+        "rgba(255, 99, 132, 1)",
+        "rgba(75, 192, 192, 1)",
+        "rgba(255, 206, 86, 1)",
+        "rgba(153, 102, 255, 1)",
       ];
       let corIndex = 0;
       let yAxisCount = 0;
 
-      // Determina as chaves de dados (remove timestamp/time)
       const chavesDeDados =
         dados.length > 0
-          ? Object.keys(dados[0]).filter(
-              (k) => k !== "timestamp" && k !== "time" && k !== "created_at"
-            )
+          ? Object.keys(dados[0]).filter((k) => k !== "timestamp")
           : [];
 
       chavesDeDados.forEach((chave) => {
-        // Extrai valores numéricos por ponto no tempo
-        const valores = dados.map((item) => {
-          const val = item[chave];
-          if (val === undefined || val === null) return null;
-          if (typeof val === "object" && val.valor !== undefined)
-            return Number(val.valor);
-          return Number(val);
-        });
+        // ****** PREPARAR DADOS PARA ESCALA DE TEMPO ******
+        // Mapeia os dados para o formato {x: timestamp, y: valor}
+        // O timestamp da API já deve ser algo que o Date() consegue interpretar (ISO string, etc.)
+        const valoresFormatados = dados
+          .map((d) => ({
+            x: new Date(d.timestamp).getTime(), // Passa o timestamp numérico (milissegundos)
+            y:
+              d[chave] !== undefined && d[chave] !== null
+                ? parseFloat(d[chave])
+                : null, // Converte para número ou null
+          }))
+          .filter((p) => !isNaN(p.y)); // Filtra pontos com y inválido (opcional, mas recomendado)
 
-        // Tenta determinar a unidade a partir do primeiro item que contenha objeto com unidade
+        // Tenta obter a unidade (mesma lógica de antes, pode ser melhorada)
         let unidade = "";
-        for (let i = 0; i < dados.length; i++) {
-          const v = dados[i][chave];
-          if (v !== undefined && v !== null) {
-            if (typeof v === "object" && v.unidade) {
-              unidade = v.unidade;
-              break;
-            }
-          }
-        }
+        if (chave.toLowerCase().includes("temperatura")) unidade = "°C";
+        else if (chave.toLowerCase().includes("umidade")) unidade = "%";
 
         const yAxisID = `y${yAxisCount}`;
-        const color = cores[corIndex % cores.length];
         const position = yAxisCount % 2 === 0 ? "left" : "right";
 
-        // Adiciona configuração da escala Y específica para este dataset
+        datasets.push({
+          label: `${chave
+            .replace(/([A-Z])/g, " $1")
+            .replace(/^./, (str) => str.toUpperCase())} (${unidade})`,
+          data: valoresFormatados, // <-- USA OS DADOS FORMATADOS {x, y}
+          borderColor: cores[corIndex % cores.length],
+          yAxisID: yAxisID,
+          tension: 0.1,
+          pointRadius: 2, // Pontos menores
+          borderWidth: 2, // Linha um pouco mais grossa
+        });
+
+        // Adiciona a configuração da escala Y
         graficoOptions.scales[yAxisID] = {
-          type: "linear",
-          display: true,
           position: position,
-          title: { display: !!unidade, text: unidade || chave },
+          title: {
+            display: true,
+            text: `${chave
+              .replace(/([A-Z])/g, " $1")
+              .replace(/^./, (str) => str.toUpperCase())} (${unidade})`,
+          },
           grid: { drawOnChartArea: yAxisCount === 0 },
         };
-
-        datasets.push({
-          label: unidade ? `${chave} (${unidade})` : chave,
-          data: valores,
-          borderColor: color,
-          backgroundColor: color,
-          fill: false,
-          tension: 0.2,
-          yAxisID: yAxisID,
-          spanGaps: true,
-          pointRadius: 2,
-        });
 
         corIndex++;
         yAxisCount++;
@@ -452,10 +438,11 @@ document.addEventListener("DOMContentLoaded", () => {
         graficoHistorico.destroy();
       }
 
+      // ****** CRIA O GRÁFICO (não precisa mais passar 'labels' separadamente) ******
       graficoHistorico = new Chart(ctx, {
         type: "line",
         data: {
-          labels,
+          // labels: labels, // Não é mais necessário com type: 'time' e dados {x,y}
           datasets: datasets,
         },
         options: graficoOptions,
