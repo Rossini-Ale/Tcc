@@ -124,11 +124,9 @@ router.post("/sistemas", async (req, res) => {
     const usuario_id = req.usuario.id;
 
     if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey) {
-      return res
-        .status(400)
-        .json({
-          message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
-        });
+      return res.status(400).json({
+        message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
+      });
     }
 
     // Validar se o thingspeak_channel_id já existe para evitar erro de UNIQUE
@@ -207,11 +205,9 @@ router.put("/sistemas/:id", async (req, res) => {
     const usuario_id = req.usuario.id;
 
     if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey) {
-      return res
-        .status(400)
-        .json({
-          message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
-        });
+      return res.status(400).json({
+        message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
+      });
     }
 
     // Validar se o thingspeak_channel_id já existe em OUTRO sistema
@@ -220,12 +216,10 @@ router.put("/sistemas/:id", async (req, res) => {
       [thingspeak_channel_id, id]
     );
     if (existente.length > 0) {
-      return res
-        .status(409)
-        .json({
-          message:
-            "Este ID de canal ThingSpeak já está em uso por outro sistema.",
-        });
+      return res.status(409).json({
+        message:
+          "Este ID de canal ThingSpeak já está em uso por outro sistema.",
+      });
     }
 
     const [result] = await pool.query(
@@ -251,12 +245,10 @@ router.put("/sistemas/:id", async (req, res) => {
     console.error("Erro ao atualizar sistema:", error);
     // Verifica erro específico de chave única
     if (error.code === "ER_DUP_ENTRY" || error.errno === 1062) {
-      return res
-        .status(409)
-        .json({
-          message:
-            "Este ID de canal ThingSpeak já está em uso por outro sistema.",
-        });
+      return res.status(409).json({
+        message:
+          "Este ID de canal ThingSpeak já está em uso por outro sistema.",
+      });
     }
     res
       .status(500)
@@ -356,11 +348,9 @@ router.post("/sistemas/:sistemaId/comando", async (req, res) => {
     );
 
     if (resultUpdate.affectedRows === 0) {
-      return res
-        .status(404)
-        .json({
-          message: "Sistema não encontrado ou não pertence a este usuário.",
-        });
+      return res.status(404).json({
+        message: "Sistema não encontrado ou não pertence a este usuário.",
+      });
     }
 
     // Registrar o evento de irrigação manual
@@ -390,11 +380,9 @@ router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
       [sistemaId, usuario_id]
     );
     if (!sistema) {
-      return res
-        .status(404)
-        .json({
-          message: "Sistema não encontrado ou não pertence a este usuário.",
-        });
+      return res.status(404).json({
+        message: "Sistema não encontrado ou não pertence a este usuário.",
+      });
     }
 
     // Busca as últimas leituras de cada tipo para o sistema
@@ -461,11 +449,9 @@ router.get("/sistemas/:sistemaId/eventos", async (req, res) => {
       [sistemaId, usuario_id]
     );
     if (!sistema) {
-      return res
-        .status(404)
-        .json({
-          message: "Sistema não encontrado ou não pertence a este usuário.",
-        });
+      return res.status(404).json({
+        message: "Sistema não encontrado ou não pertence a este usuário.",
+      });
     }
 
     // Busca os últimos 10 eventos
@@ -499,11 +485,9 @@ router.get("/sistemas/:sistemaId/mapeamento", async (req, res) => {
       [sistemaId, usuario_id]
     );
     if (!sistema) {
-      return res
-        .status(404)
-        .json({
-          message: "Sistema não encontrado ou não pertence a este usuário.",
-        });
+      return res.status(404).json({
+        message: "Sistema não encontrado ou não pertence a este usuário.",
+      });
     }
 
     // Busca os mapeamentos existentes
@@ -532,12 +516,10 @@ router.put("/sistemas/:sistemaId/mapeamento", async (req, res) => {
     return res.status(400).json({ message: "ID do sistema inválido" });
   }
   if (!Array.isArray(mapeamentos)) {
-    return res
-      .status(400)
-      .json({
-        message:
-          'Formato de dados inválido. Esperado um objeto com a chave "mapeamentos" contendo um array.',
-      });
+    return res.status(400).json({
+      message:
+        'Formato de dados inválido. Esperado um objeto com a chave "mapeamentos" contendo um array.',
+    });
   }
 
   let connection;
@@ -552,11 +534,9 @@ router.put("/sistemas/:sistemaId/mapeamento", async (req, res) => {
     );
     if (sistemas.length === 0) {
       await connection.rollback(); // Desfaz antes de retornar erro
-      return res
-        .status(404)
-        .json({
-          message: "Sistema não encontrado ou não pertence a este usuário.",
-        });
+      return res.status(404).json({
+        message: "Sistema não encontrado ou não pertence a este usuário.",
+      });
     }
 
     // 1. Apaga os mapeamentos antigos para este sistema
@@ -608,6 +588,7 @@ router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
   try {
     const { sistemaId } = req.params;
     const usuario_id = req.usuario.id; // Autenticado
+    const { sensor, intervalo } = req.query; // Pega 'sensor' (ex: umidadeDoSolo) e 'intervalo' (ex: 7d) da query string
 
     // Verifica se o sistema pertence ao usuário
     const [[sistema]] = await pool.query(
@@ -615,39 +596,92 @@ router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
       [sistemaId, usuario_id]
     );
     if (!sistema) {
-      return res
-        .status(404)
-        .json({
-          message: "Sistema não encontrado ou não pertence a este usuário.",
-        });
+      return res.status(404).json({
+        message: "Sistema não encontrado ou não pertence a este usuário.",
+      });
     }
 
-    // Busca leituras do último dia
-    const sql = `
-      SELECT mt.tipo_leitura, l.valor, l.timestamp
-      FROM Leituras l
-      JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
-      WHERE mt.sistema_id = ? AND l.timestamp >= NOW() - INTERVAL 1 DAY
-      ORDER BY l.timestamp ASC;
-    `;
-    const [leituras] = await pool.query(sql, [sistemaId]);
+    // --- Monta a query SQL dinamicamente ---
+    let sql = `
+            SELECT mt.tipo_leitura, l.valor, l.timestamp
+            FROM Leituras l
+            JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
+            WHERE mt.sistema_id = ?
+        `;
+    const params = [sistemaId]; // Parâmetros para a query SQL
 
-    // Formata os dados agrupados por timestamp
-    const dadosFormatados = [];
-    const timestamps = [
-      ...new Set(leituras.map((l) => l.timestamp.toISOString())),
-    ];
-    timestamps.forEach((ts) => {
-      const point = { timestamp: ts };
-      const leiturasNessePonto = leituras.filter(
-        (l) => l.timestamp.toISOString() === ts
+    // Adiciona filtro de intervalo de tempo
+    let intervalClause = "INTERVAL 1 DAY"; // Padrão é 1 dia
+    if (intervalo === "7d") {
+      intervalClause = "INTERVAL 7 DAY";
+    } else if (intervalo === "30d") {
+      intervalClause = "INTERVAL 30 DAY";
+    }
+    // Se for '1d' ou qualquer outro valor/ausente, usa o padrão 'INTERVAL 1 DAY'
+
+    sql += ` AND l.timestamp >= NOW() - ${intervalClause}`;
+
+    // Adiciona filtro de sensor, SE o parâmetro 'sensor' foi fornecido
+    if (sensor) {
+      // Precisamos encontrar o 'tipo_leitura' no banco que corresponde à chave 'sensor' (camelCase)
+      const [mappings] = await pool.query(
+        "SELECT field_number, tipo_leitura FROM Mapeamento_ThingSpeak WHERE sistema_id = ?",
+        [sistemaId]
       );
-      leiturasNessePonto.forEach((leitura) => {
-        const key = toCamelCase(leitura.tipo_leitura);
-        point[key] = parseFloat(leitura.valor); // Converte para número
+      let tipoLeituraFiltrar = null;
+      for (const mapping of mappings) {
+        if (toCamelCase(mapping.tipo_leitura) === sensor) {
+          tipoLeituraFiltrar = mapping.tipo_leitura;
+          break;
+        }
+      }
+
+      if (tipoLeituraFiltrar) {
+        // Se encontramos o tipo_leitura correspondente, adicionamos ao filtro SQL
+        sql += " AND mt.tipo_leitura = ?";
+        params.push(tipoLeituraFiltrar);
+      } else {
+        // Se a chave 'sensor' não corresponde a nenhum mapeamento, retornamos vazio
+        console.warn(
+          `Chave de sensor "${sensor}" não encontrada no mapeamento do sistema ${sistemaId} para filtro.`
+        );
+        return res.json([]); // Retorna array vazio pois o sensor solicitado não existe no mapeamento
+      }
+    }
+
+    sql += " ORDER BY l.timestamp ASC;"; // Ordena por tempo para o gráfico
+
+    // Executa a query
+    const [leituras] = await pool.query(sql, params);
+
+    // --- Formata a resposta ---
+    let dadosFormatados = [];
+    if (sensor && leituras.length > 0) {
+      // Se filtramos por um sensor específico, o formato é simples: [{ timestamp: ..., valor: ... }]
+      // Ideal para um gráfico de linha única
+      dadosFormatados = leituras.map((l) => ({
+        timestamp: l.timestamp.toISOString(), // Envia como ISO string completa
+        valor: parseFloat(l.valor), // Garante que é número
+      }));
+    } else if (!sensor) {
+      // Se NÃO filtramos por sensor (gráfico principal), mantém o formato agrupado por timestamp
+      const timestamps = [
+        ...new Set(leituras.map((l) => l.timestamp.toISOString())),
+      ];
+      timestamps.forEach((ts) => {
+        const point = { timestamp: ts };
+        const leiturasNessePonto = leituras.filter(
+          (l) => l.timestamp.toISOString() === ts
+        );
+        leiturasNessePonto.forEach((leitura) => {
+          const key = toCamelCase(leitura.tipo_leitura);
+          point[key] = parseFloat(leitura.valor);
+        });
+        dadosFormatados.push(point);
       });
-      dadosFormatados.push(point);
-    });
+    }
+    // Se `sensor` foi passado mas `leituras` está vazio, `dadosFormatados` continua como `[]`
+
     res.json(dadosFormatados);
   } catch (error) {
     console.error("Erro ao buscar dados históricos:", error);
