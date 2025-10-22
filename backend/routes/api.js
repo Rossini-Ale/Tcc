@@ -295,11 +295,7 @@ router.get("/culturas", async (req, res) => {
   }
 });
 
-// Rota movida para PUT /sistemas/:id (mais RESTful)
-// router.put("/sistemas/:sistemaId/cultura", ...);
-
 // -- Comando Irrigação (ESP32) --
-// Esta rota é para o ESP32 buscar o comando pendente
 router.get("/comando/:sistemaId", async (req, res) => {
   try {
     const { sistemaId } = req.params;
@@ -328,7 +324,6 @@ router.get("/comando/:sistemaId", async (req, res) => {
 });
 
 // -- Comando Irrigação (Dashboard) --
-// Esta rota é para o DASHBOARD enviar um comando manual
 router.post("/sistemas/:sistemaId/comando", async (req, res) => {
   try {
     const { sistemaId } = req.params;
@@ -369,24 +364,27 @@ router.post("/sistemas/:sistemaId/comando", async (req, res) => {
 });
 
 // -- Dados Atuais --
+// ############################################################
+// ##               INÍCIO DA SEÇÃO CORRIGIDA                ##
+// ############################################################
 router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
   try {
     const { sistemaId } = req.params;
     const usuario_id = req.usuario.id; // Autenticado
 
     // Verifica se o sistema pertence ao usuário E pega o comando atual
-    const [[sistema]] = await pool.query(
+    const [[sistemaStatus]] = await pool.query(
       "SELECT id, comando_irrigacao FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [sistemaId, usuario_id]
     );
-    if (!sistema) {
+    if (!sistemaStatus) {
       return res.status(404).json({
         message: "Sistema não encontrado ou não pertence a este usuário.",
       });
     }
 
     // Busca as últimas leituras de cada tipo para o sistema
-    const sql = `
+    const sqlLeituras = `
       SELECT mt.tipo_leitura, mt.unidade, l.valor, l.timestamp
       FROM Leituras l
       JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
@@ -399,12 +397,15 @@ router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
           GROUP BY mapeamento_id
       );
     `;
-    const [rows] = await pool.query(sql, [sistemaId, sistemaId]); // Passa o ID duas vezes
+    const [leiturasRows] = await pool.query(sqlLeituras, [
+      sistemaId,
+      sistemaId,
+    ]);
 
     // Formata os dados num objeto mais fácil de usar no frontend
-    const dadosFormatados = rows.reduce(
+    const dadosFormatados = leiturasRows.reduce(
       (acc, { tipo_leitura, unidade, valor, timestamp }) => {
-        const key = toCamelCase(tipo_leitura); // Ex: "temperaturaAmbiente"
+        const key = toCamelCase(tipo_leitura); // Ex: "temperaturaDoAr"
         acc[key] = {
           valor: parseFloat(valor), // Converte para número
           unidade: unidade,
@@ -416,19 +417,167 @@ router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
     );
 
     // Adiciona o status da bomba
-    dadosFormatados.statusBomba = sistema.comando_irrigacao;
+    dadosFormatados.statusBomba = sistemaStatus.comando_irrigacao;
 
-    // Busca o último cálculo de ET0 (opcional)
-    const [[ultimoET]] = await pool.query(
-      "SELECT valor_et_calculado, timestamp_calculo FROM Calculos_ET WHERE sistema_id = ? ORDER BY timestamp_calculo DESC LIMIT 1",
-      [sistemaId]
+    // Busca informações básicas do sistema (ET0, data plantio, ID cultura)
+    const [[sistemaInfoBase]] = await pool.query(
+      `SELECT
+           si.cultura_id_atual,
+           si.data_plantio,
+           (SELECT valor_et_calculado FROM Calculos_ET WHERE sistema_id = ? ORDER BY timestamp_calculo DESC LIMIT 1) as ultimo_et0,
+           (SELECT timestamp_calculo FROM Calculos_ET WHERE sistema_id = ? ORDER BY timestamp_calculo DESC LIMIT 1) as timestamp_et0
+         FROM Sistemas_Irrigacao si
+         WHERE si.id = ? AND si.usuario_id = ?`,
+      [sistemaId, sistemaId, sistemaId, usuario_id]
     );
-    if (ultimoET) {
+
+    let kc_atual = null;
+    let fase_atual = "N/A";
+    let timestamp_et0 = null;
+    let ultimo_et0 = null;
+
+    if (sistemaInfoBase) {
+      timestamp_et0 = sistemaInfoBase.timestamp_et0;
+      ultimo_et0 =
+        sistemaInfoBase.ultimo_et0 !== null
+          ? parseFloat(sistemaInfoBase.ultimo_et0)
+          : null;
+
+      // Procede para buscar Kc/Fase apenas se houver cultura, data de plantio e ET0 base
+      if (
+        sistemaInfoBase.cultura_id_atual &&
+        sistemaInfoBase.data_plantio &&
+        ultimo_et0 !== null
+      ) {
+        const culturaId = sistemaInfoBase.cultura_id_atual;
+        const dataPlantio = new Date(sistemaInfoBase.data_plantio);
+        const hoje = new Date();
+        // Calcula dias desde plantio (considerando apenas a data, não a hora)
+        const diaPlantio = new Date(
+          dataPlantio.getFullYear(),
+          dataPlantio.getMonth(),
+          dataPlantio.getDate()
+        );
+        const diaHoje = new Date(
+          hoje.getFullYear(),
+          hoje.getMonth(),
+          hoje.getDate()
+        );
+        const diffTime = Math.abs(diaHoje - diaPlantio);
+        const diasDesdePlantio =
+          Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 porque o dia do plantio é dia 1
+
+        // Busca todos os parâmetros para esta cultura
+        const [parametros] = await pool.query(
+          `SELECT fase, duracao_dias, parametro, valor
+               FROM Parametros_Cultura
+               WHERE cultura_id = ?`,
+          [culturaId]
+        );
+
+        // Agrupa parâmetros por fase para facilitar o acesso
+        const fasesInfo = {};
+        parametros.forEach((p) => {
+          if (!fasesInfo[p.fase]) {
+            // Assume que a primeira linha encontrada para a fase tem a duração correta
+            fasesInfo[p.fase] = {
+              duracao: parseInt(p.duracao_dias, 10) || 0,
+              parametros: {},
+            };
+          }
+          // Armazena o parâmetro (ex: 'Kc') e seu valor
+          fasesInfo[p.fase].parametros[p.parametro.toLowerCase()] = p.valor;
+        });
+
+        // *** IMPORTANTE: Define a ordem esperada das fases aqui ***
+        // Ajuste esta lista se os nomes ou a ordem das suas fases forem diferentes
+        const ordemFases = [
+          "Inicial",
+          "Desenvolvimento",
+          "Intermediário",
+          "Final",
+        ];
+        let diasAcumulados = 0;
+        let faseEncontrada = false;
+
+        for (const nomeFase of ordemFases) {
+          if (fasesInfo[nomeFase]) {
+            diasAcumulados += fasesInfo[nomeFase].duracao;
+            if (diasDesdePlantio <= diasAcumulados) {
+              fase_atual = nomeFase;
+              // Busca o valor do Kc para esta fase (convertido para minúsculo)
+              const kcFase = fasesInfo[nomeFase].parametros["kc"];
+              if (kcFase !== undefined) {
+                kc_atual = parseFloat(kcFase);
+              } else {
+                console.warn(
+                  `Parâmetro 'Kc' não encontrado para a fase '${nomeFase}' da cultura ${culturaId}`
+                );
+                kc_atual = null; // Garante que será null se não encontrar Kc
+              }
+              faseEncontrada = true;
+              break; // Sai do loop assim que encontrar a fase atual
+            }
+          } else {
+            console.warn(
+              `Fase '${nomeFase}' definida na ordem não encontrada nos parâmetros da cultura ${culturaId}`
+            );
+          }
+        }
+
+        // Se passou por todas as fases e não encontrou (diasDesdePlantio > duração total)
+        if (!faseEncontrada && ordemFases.length > 0) {
+          const ultimaFaseNome = ordemFases[ordemFases.length - 1];
+          if (fasesInfo[ultimaFaseNome]) {
+            fase_atual = ultimaFaseNome;
+            const kcFase = fasesInfo[ultimaFaseNome].parametros["kc"];
+            if (kcFase !== undefined) {
+              kc_atual = parseFloat(kcFase);
+            } else {
+              console.warn(
+                `Parâmetro 'Kc' não encontrado para a última fase '${ultimaFaseNome}' da cultura ${culturaId}`
+              );
+              kc_atual = null;
+            }
+          }
+        }
+
+        // Validação final: Se kc_atual não for um número válido, reseta para null
+        if (isNaN(kc_atual)) {
+          kc_atual = null;
+        }
+      }
+    }
+
+    // Monta a resposta final
+    if (ultimo_et0 !== null && kc_atual !== null) {
+      // Calcula ETc se tiver ET0 e Kc
+      const etc = ultimo_et0 * kc_atual;
+      dadosFormatados.evapotranspiracaoCultura = {
+        valor: etc,
+        kc: kc_atual,
+        fase: fase_atual,
+        timestamp: timestamp_et0,
+      };
+      // Opcional: Inclui ET0 separadamente
       dadosFormatados.evapotranspiracao = {
-        valor: parseFloat(ultimoET.valor_et_calculado),
-        timestamp: ultimoET.timestamp_calculo,
+        valor: ultimo_et0,
+        timestamp: timestamp_et0,
+      };
+    } else if (ultimo_et0 !== null) {
+      // Fallback: Se não tem Kc, mostra ET0 no card ETc
+      dadosFormatados.evapotranspiracaoCultura = {
+        valor: ultimo_et0,
+        timestamp: timestamp_et0,
+        // kc e fase ficam undefined
+      };
+      // Opcional: Inclui ET0 separadamente
+      dadosFormatados.evapotranspiracao = {
+        valor: ultimo_et0,
+        timestamp: timestamp_et0,
       };
     }
+    // Se ultimo_et0 for null, nenhuma chave de evapotranspiração será adicionada.
 
     res.json(dadosFormatados);
   } catch (error) {
@@ -436,6 +585,9 @@ router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
     res.status(500).json({ message: "Erro ao buscar dados atuais." });
   }
 });
+// ############################################################
+// ##                 FIM DA SEÇÃO CORRIGIDA                 ##
+// ############################################################
 
 // -- Eventos de Irrigação --
 router.get("/sistemas/:sistemaId/eventos", async (req, res) => {
@@ -469,7 +621,6 @@ router.get("/sistemas/:sistemaId/eventos", async (req, res) => {
 // --- ROTAS DE MAPEAMENTO THINKSPEAK ---
 
 // ROTA PARA OBTER O MAPEAMENTO DE UM SISTEMA
-// (Adaptação da sua rota GET /sistemas/:id/mapeamento)
 router.get("/sistemas/:sistemaId/mapeamento", async (req, res) => {
   try {
     const sistemaId = parseInt(req.params.sistemaId, 10);
@@ -495,7 +646,7 @@ router.get("/sistemas/:sistemaId/mapeamento", async (req, res) => {
       "SELECT field_number, tipo_leitura, unidade FROM Mapeamento_ThingSpeak WHERE sistema_id = ? ORDER BY field_number",
       [sistemaId]
     );
-    res.json(mapeamentos); // Retorna um array [{ field_number: 1, tipo_leitura: 'Temp', unidade: 'C' }, ...]
+    res.json(mapeamentos);
   } catch (error) {
     console.error(
       `Erro ao buscar mapeamento para sistema ${req.params.sistemaId}:`,
@@ -506,11 +657,10 @@ router.get("/sistemas/:sistemaId/mapeamento", async (req, res) => {
 });
 
 // ROTA PARA ATUALIZAR O MAPEAMENTO DE UM SISTEMA
-// (Adaptação da sua rota PUT /sistemas/:id/mapeamento com melhorias)
 router.put("/sistemas/:sistemaId/mapeamento", async (req, res) => {
   const sistemaId = parseInt(req.params.sistemaId, 10);
   const usuario_id = req.usuario.id; // Autenticado
-  const mapeamentos = req.body.mapeamentos; // Espera um array no corpo: { mapeamentos: [{ field_number: 1, tipo_leitura: 'Temp', unidade: 'C' }, ...] }
+  const mapeamentos = req.body.mapeamentos; // Espera { mapeamentos: [...] }
 
   if (isNaN(sistemaId)) {
     return res.status(400).json({ message: "ID do sistema inválido" });
@@ -518,41 +668,41 @@ router.put("/sistemas/:sistemaId/mapeamento", async (req, res) => {
   if (!Array.isArray(mapeamentos)) {
     return res.status(400).json({
       message:
-        'Formato de dados inválido. Esperado um objeto com a chave "mapeamentos" contendo um array.',
+        'Formato inválido. Esperado objeto com chave "mapeamentos" contendo array.',
     });
   }
 
   let connection;
   try {
-    connection = await pool.getConnection(); // Obter uma conexão para usar transação
+    connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // Validação de segurança (dentro da transação)
+    // Validação de segurança
     const [sistemas] = await connection.query(
       "SELECT id FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [sistemaId, usuario_id]
     );
     if (sistemas.length === 0) {
-      await connection.rollback(); // Desfaz antes de retornar erro
+      await connection.rollback();
       return res.status(404).json({
         message: "Sistema não encontrado ou não pertence a este usuário.",
       });
     }
 
-    // 1. Apaga os mapeamentos antigos para este sistema
+    // Apaga antigos
     await connection.query(
       "DELETE FROM Mapeamento_ThingSpeak WHERE sistema_id = ?",
       [sistemaId]
     );
 
-    // 2. Insere os novos mapeamentos (apenas os que têm tipo_leitura definido e não é "Nenhum" ou vazio)
+    // Insere novos
     const novosMapeamentos = mapeamentos
       .filter(
         (map) =>
           map &&
           map.field_number &&
           map.tipo_leitura &&
-          map.tipo_leitura.trim() !== "" &&
+          map.tipo_leitura.trim() &&
           map.tipo_leitura.toLowerCase() !== "nenhum"
       )
       .map((map) => [
@@ -560,35 +710,35 @@ router.put("/sistemas/:sistemaId/mapeamento", async (req, res) => {
         map.field_number,
         map.tipo_leitura.trim(),
         map.unidade || null,
-      ]); // Trim para limpar espaços
+      ]);
 
     if (novosMapeamentos.length > 0) {
       await connection.query(
         "INSERT INTO Mapeamento_ThingSpeak (sistema_id, field_number, tipo_leitura, unidade) VALUES ?",
-        [novosMapeamentos] // Passa o array de arrays diretamente
+        [novosMapeamentos]
       );
     }
 
-    await connection.commit(); // Confirma a transação
+    await connection.commit();
     res.status(200).json({ message: "Mapeamento atualizado com sucesso!" });
   } catch (error) {
-    if (connection) await connection.rollback(); // Desfaz em caso de erro
+    if (connection) await connection.rollback();
     console.error(
       `Erro ao atualizar mapeamento para sistema ${sistemaId}:`,
       error
     );
     res.status(500).json({ message: "Erro interno ao atualizar mapeamento." });
   } finally {
-    if (connection) connection.release(); // Libera a conexão de volta para o pool
+    if (connection) connection.release();
   }
 });
 
-// -- Dados Históricos -- (Sua rota existente, parece OK)
+// -- Dados Históricos --
 router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
   try {
     const { sistemaId } = req.params;
     const usuario_id = req.usuario.id; // Autenticado
-    const { sensor, intervalo } = req.query; // Pega 'sensor' (ex: umidadeDoSolo) e 'intervalo' (ex: 7d) da query string
+    const { sensor, intervalo } = req.query;
 
     // Verifica se o sistema pertence ao usuário
     const [[sistema]] = await pool.query(
@@ -601,86 +751,101 @@ router.get("/sistemas/:sistemaId/dados-historicos", async (req, res) => {
       });
     }
 
-    // --- Monta a query SQL dinamicamente ---
-    let sql = `
-            SELECT mt.tipo_leitura, l.valor, l.timestamp
-            FROM Leituras l
-            JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
-            WHERE mt.sistema_id = ?
-        `;
-    const params = [sistemaId]; // Parâmetros para a query SQL
+    // Monta a query SQL
+    let sqlBase = `
+        SELECT mt.tipo_leitura, l.valor, l.timestamp
+        FROM Leituras l
+        JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
+        WHERE mt.sistema_id = ?
+    `;
+    const params = [sistemaId];
 
-    // Adiciona filtro de intervalo de tempo
-    let intervalClause = "INTERVAL 1 DAY"; // Padrão é 1 dia
-    if (intervalo === "7d") {
-      intervalClause = "INTERVAL 7 DAY";
-    } else if (intervalo === "30d") {
-      intervalClause = "INTERVAL 30 DAY";
-    }
-    // Se for '1d' ou qualquer outro valor/ausente, usa o padrão 'INTERVAL 1 DAY'
+    // Filtro de intervalo
+    let intervalClause = "INTERVAL 1 DAY";
+    if (intervalo === "7d") intervalClause = "INTERVAL 7 DAY";
+    else if (intervalo === "30d") intervalClause = "INTERVAL 30 DAY";
+    const timeFilterSql = ` AND l.timestamp >= NOW() - ${intervalClause}`;
 
-    sql += ` AND l.timestamp >= NOW() - ${intervalClause}`;
+    let sql = sqlBase + timeFilterSql;
+    let orderBy = " ORDER BY l.timestamp ASC";
+    let isEtQuery = false;
 
-    // Adiciona filtro de sensor, SE o parâmetro 'sensor' foi fornecido
+    // Filtro de sensor
     if (sensor) {
-      // Precisamos encontrar o 'tipo_leitura' no banco que corresponde à chave 'sensor' (camelCase)
       const [mappings] = await pool.query(
-        "SELECT field_number, tipo_leitura FROM Mapeamento_ThingSpeak WHERE sistema_id = ?",
+        "SELECT tipo_leitura FROM Mapeamento_ThingSpeak WHERE sistema_id = ?",
         [sistemaId]
       );
-      let tipoLeituraFiltrar = null;
-      for (const mapping of mappings) {
-        if (toCamelCase(mapping.tipo_leitura) === sensor) {
-          tipoLeituraFiltrar = mapping.tipo_leitura;
-          break;
-        }
-      }
+      const tipoLeituraFiltrar = mappings.find(
+        (m) => toCamelCase(m.tipo_leitura) === sensor
+      )?.tipo_leitura;
 
       if (tipoLeituraFiltrar) {
-        // Se encontramos o tipo_leitura correspondente, adicionamos ao filtro SQL
         sql += " AND mt.tipo_leitura = ?";
         params.push(tipoLeituraFiltrar);
+      } else if (
+        sensor === "evapotranspiracao" ||
+        sensor === "evapotranspiracaoCultura"
+      ) {
+        // Busca ET0 histórico se o sensor for relacionado a evapotranspiração
+        sql = `SELECT 'Evapotranspiração Ref.' as tipo_leitura, valor_et_calculado as valor, timestamp_calculo as timestamp
+                   FROM Calculos_ET
+                   WHERE sistema_id = ? AND timestamp_calculo >= NOW() - ${intervalClause}`;
+        params.length = 0; // Limpa params
+        params.push(sistemaId);
+        orderBy = " ORDER BY timestamp ASC"; // Ajusta ORDER BY
+        isEtQuery = true;
       } else {
-        // Se a chave 'sensor' não corresponde a nenhum mapeamento, retornamos vazio
         console.warn(
-          `Chave de sensor "${sensor}" não encontrada no mapeamento do sistema ${sistemaId} para filtro.`
+          `Sensor "${sensor}" não encontrado para sistema ${sistemaId}.`
         );
-        return res.json([]); // Retorna array vazio pois o sensor solicitado não existe no mapeamento
+        return res.json([]);
       }
     }
 
-    sql += " ORDER BY l.timestamp ASC;"; // Ordena por tempo para o gráfico
+    sql += orderBy; // Adiciona ordenação
 
-    // Executa a query
+    // Executa a query principal
     const [leituras] = await pool.query(sql, params);
 
     // --- Formata a resposta ---
     let dadosFormatados = [];
     if (sensor && leituras.length > 0) {
-      // Se filtramos por um sensor específico, o formato é simples: [{ timestamp: ..., valor: ... }]
-      // Ideal para um gráfico de linha única
+      // Formato simples para gráfico de linha única
       dadosFormatados = leituras.map((l) => ({
-        timestamp: l.timestamp.toISOString(), // Envia como ISO string completa
-        valor: parseFloat(l.valor), // Garante que é número
+        timestamp: l.timestamp.toISOString(),
+        valor: parseFloat(l.valor),
       }));
     } else if (!sensor) {
-      // Se NÃO filtramos por sensor (gráfico principal), mantém o formato agrupado por timestamp
-      const timestamps = [
-        ...new Set(leituras.map((l) => l.timestamp.toISOString())),
-      ];
-      timestamps.forEach((ts) => {
-        const point = { timestamp: ts };
-        const leiturasNessePonto = leituras.filter(
-          (l) => l.timestamp.toISOString() === ts
-        );
-        leiturasNessePonto.forEach((leitura) => {
-          const key = toCamelCase(leitura.tipo_leitura);
-          point[key] = parseFloat(leitura.valor);
-        });
-        dadosFormatados.push(point);
+      // Agrupa por timestamp para gráfico principal
+      const dataMap = {};
+      leituras.forEach((l) => {
+        const ts = l.timestamp.toISOString();
+        if (!dataMap[ts]) dataMap[ts] = { timestamp: ts };
+        const key = toCamelCase(l.tipo_leitura);
+        dataMap[ts][key] = parseFloat(l.valor);
       });
+
+      // Adiciona dados de ET0 (histórico)
+      const [etRows] = await pool.query(
+        `SELECT valor_et_calculado, timestamp_calculo as timestamp
+             FROM Calculos_ET
+             WHERE sistema_id = ? AND timestamp_calculo >= NOW() - ${intervalClause}
+             ORDER BY timestamp_calculo ASC`,
+        [sistemaId]
+      );
+
+      etRows.forEach((row) => {
+        const ts = row.timestamp.toISOString();
+        if (!dataMap[ts]) dataMap[ts] = { timestamp: ts };
+        dataMap[ts].evapotranspiracao = parseFloat(row.valor_et_calculado); // Usa chave 'evapotranspiracao' para ET0
+      });
+
+      // Converte o mapa para array e ordena
+      dadosFormatados = Object.values(dataMap).sort(
+        (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+      );
     }
-    // Se `sensor` foi passado mas `leituras` está vazio, `dadosFormatados` continua como `[]`
 
     res.json(dadosFormatados);
   } catch (error) {

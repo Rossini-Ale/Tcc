@@ -250,7 +250,7 @@ document.addEventListener("DOMContentLoaded", () => {
     carregarDadosAtuais(sistemaId);
     desenharGraficoHistorico(sistemaId, "1d");
     carregarHistoricoEventos(sistemaId);
-    // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
+    // ***** CORREÇÃO: Linha abaixo REMOVIDA (Erro de Ref) *****
     // adicionarListenersCards();
   }
   function limparDashboard() {
@@ -320,14 +320,18 @@ document.addEventListener("DOMContentLoaded", () => {
         detailsElement = null
       ) {
         const dado = dados ? dados[dataKey] : undefined;
+        const colExists = !!colElement;
+        const valorExists = !!valorElement;
+        const detailsExists = !!detailsElement;
+
         if (dado?.valor !== undefined && dado?.valor !== null) {
-          colElement?.classList.remove("d-none");
-          if (valorElement)
+          if (colExists) colElement.classList.remove("d-none");
+          if (valorExists)
             valorElement.textContent = `${parseFloat(dado.valor).toFixed(
               casasDecimais
             )} ${dado.unidade || unidadePadrao}`;
           if (
-            detailsElement &&
+            detailsExists &&
             dado.kc !== undefined &&
             dado.fase !== undefined
           ) {
@@ -335,15 +339,15 @@ document.addEventListener("DOMContentLoaded", () => {
               dado.kc
             ).toFixed(2)}, ${dado.fase})`;
             detailsElement.classList.remove("d-none");
-          } else if (detailsElement) {
+          } else if (detailsExists) {
             detailsElement.textContent = `mm/dia`;
             detailsElement.classList.add("d-none"); // Esconde se não tiver dados Kc/Fase
           }
           return true;
         } else {
-          colElement?.classList.add("d-none");
-          if (valorElement) valorElement.textContent = `-- ${unidadePadrao}`;
-          if (detailsElement) {
+          if (colExists) colElement.classList.add("d-none"); // Oculta coluna inteira
+          if (valorExists) valorElement.textContent = `-- ${unidadePadrao}`;
+          if (detailsExists) {
             detailsElement.textContent = `mm/dia`;
             detailsElement.classList.add("d-none");
           }
@@ -624,7 +628,7 @@ document.addEventListener("DOMContentLoaded", () => {
           dateStyle: "short",
           timeStyle: "short",
         });
-        const acao = ev.acao?.replace(/_/g, " ") || "N/A"; // Troca _ por espaço
+        const acao = ev.acao?.replace(/_/g, " ") || "N/A";
         const motivo = ev.motivo || "--";
         tabelaEventosEl.innerHTML += `<tr><td>${dataHora}</td><td class="text-capitalize">${acao.toLowerCase()}</td><td>${motivo}</td></tr>`;
       });
@@ -1099,9 +1103,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // *** CORREÇÃO: Usa Delegação de Eventos para cliques nos cards ***
   dashboardContentEl?.addEventListener("click", (event) => {
-    // Encontra o elemento '.card-sensor' mais próximo que foi clicado
     const colunaCard = event.target.closest(".card-sensor");
-    // Verifica se encontrou o card, se ele tem os dados e se NÃO está oculto
     if (colunaCard && !colunaCard.classList.contains("d-none")) {
       const sensorKey = colunaCard.dataset.sensor;
       const sensorLabel = colunaCard.dataset.label;
@@ -1132,16 +1134,15 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- 7. INICIALIZAÇÃO E ATUALIZAÇÃO AUTOMÁTICA ---
-  inicializarDashboard(); // Inicia o carregamento do dashboard
+  inicializarDashboard();
 
   let updateInterval = setInterval(() => {
     if (sistemaIdAtivo) {
       carregarDadosAtuais(sistemaIdAtivo);
-      carregarHistoricoEventos(sistemaIdAtivo); // Atualiza o log de eventos também
+      carregarHistoricoEventos(sistemaIdAtivo);
     }
   }, 30000); // Atualiza a cada 30 segundos
 
-  // Opcional: Pausar atualização quando a janela não estiver visível
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       clearInterval(updateInterval);
@@ -1150,7 +1151,7 @@ document.addEventListener("DOMContentLoaded", () => {
         carregarDadosAtuais(sistemaIdAtivo);
         carregarHistoricoEventos(sistemaIdAtivo);
       }
-      clearInterval(updateInterval); // Limpa o antigo
+      clearInterval(updateInterval);
       updateInterval = setInterval(() => {
         if (sistemaIdAtivo) {
           carregarDadosAtuais(sistemaIdAtivo);
