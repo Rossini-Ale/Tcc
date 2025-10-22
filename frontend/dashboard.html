@@ -19,47 +19,71 @@
         cursor: pointer;
         transition: transform 0.2s ease-in-out;
       }
-      .card-sensor:hover {
+      .card-sensor:hover:not(.d-none) {
+        /* Aplica hover apenas se não estiver oculto */
         transform: translateY(-5px);
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      }
+      /* Garante que o canvas ocupe o espaço */
+      #graficoHistorico,
+      #canvasGraficoDetalhado {
+        display: block;
+        width: 100% !important; /* Força largura */
+        height: 100% !important; /* Força altura */
+      }
+      .chart-container {
+        position: relative;
+        height: 400px; /* Altura padrão para os gráficos */
+        width: 100%;
       }
     </style>
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg navbar-dark">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success">
       <div class="container-fluid">
         <a class="navbar-brand" href="#"
           ><i class="bi bi-flower1"></i> IrriTech</a
         >
-        <button id="logoutButton" class="btn btn-outline-light">Sair</button>
+        <button id="logoutButton" class="btn btn-outline-light">
+          Sair <i class="bi bi-box-arrow-right"></i>
+        </button>
       </div>
     </nav>
 
     <main class="container mt-4 mb-5">
-      <div id="gerenciamentoSistemas" class="card mb-4 d-none">
+      <div id="gerenciamentoSistemas" class="card mb-4 d-none shadow-sm">
         <div
           class="card-body d-flex justify-content-between align-items-center flex-wrap gap-3"
         >
           <div>
-            <label for="seletorSistemas" class="form-label fw-bold"
+            <label for="seletorSistemas" class="form-label fw-bold mb-0 me-2"
               >Sistema Ativo:</label
             >
             <select
-              class="form-select form-select-lg"
+              class="form-select form-select-lg d-inline-block w-auto"
               id="seletorSistemas"
             ></select>
           </div>
           <div class="d-flex flex-wrap gap-2">
-            <button class="btn btn-outline-secondary" id="btnEditarSistema">
-              <i class="bi bi-pencil-square"></i> Editar
+            <button
+              class="btn btn-outline-secondary btn-sm"
+              id="btnEditarSistema"
+            >
+              <i class="bi bi-pencil-square"></i> Editar Sistema
             </button>
-            <button class="btn btn-outline-info" id="btnAbrirModalMapeamento">
+            <button
+              class="btn btn-outline-info btn-sm"
+              id="btnAbrirModalMapeamento"
+            >
               <i class="bi bi-sliders"></i> Mapeamento
             </button>
-            <button class="btn btn-outline-danger" id="btnExcluirSistema">
-              <i class="bi bi-trash3"></i> Excluir
+            <button
+              class="btn btn-outline-danger btn-sm"
+              id="btnExcluirSistema"
+            >
+              <i class="bi bi-trash3"></i> Excluir Sistema
             </button>
-            <button class="btn btn-primary" id="btnAbrirModalSistema">
+            <button class="btn btn-success btn-sm" id="btnAbrirModalSistema">
               <i class="bi bi-plus-circle-fill"></i> Adicionar Novo
             </button>
           </div>
@@ -68,18 +92,15 @@
 
       <div
         id="empty-state"
-        class="text-center p-5 border rounded bg-white d-none"
+        class="text-center p-5 border rounded bg-light d-none"
       >
-        <i
-          class="bi bi-info-circle-fill"
-          style="font-size: 3rem; color: var(--cor-primaria)"
-        ></i>
+        <i class="bi bi-info-circle-fill display-1 text-success mb-3"></i>
         <h2 class="mt-3">Bem-vindo ao IrriTech!</h2>
         <p class="lead text-muted">
           Você ainda não cadastrou nenhum sistema de irrigação.
         </p>
         <button
-          class="btn btn-primary btn-lg mt-3"
+          class="btn btn-success btn-lg mt-3"
           id="btnAdicionarPrimeiroSistema"
         >
           <i class="bi bi-plus-circle-fill"></i> Adicionar seu primeiro sistema
@@ -88,7 +109,7 @@
 
       <div id="dashboard-content" class="d-none">
         <div class="mb-4">
-          <h1>Painel de Controle</h1>
+          <h1 class="display-5">Painel de Controle</h1>
           <h4 class="text-muted fw-light" id="nomeSistemaAtivoDisplay">
             Carregando...
           </h4>
@@ -101,14 +122,16 @@
             data-sensor="umidadeDoSolo"
             data-label="Umidade do Solo"
           >
-            <div class="card text-center h-100">
+            <div class="card text-center h-100 shadow-sm">
               <div
                 class="card-body p-4 d-flex flex-column justify-content-center"
               >
-                <h5 class="card-title">
+                <h5 class="card-title text-primary">
                   <i class="bi bi-moisture"></i> Umidade do Solo
                 </h5>
-                <p class="card-value display-4" id="valorUmidadeSolo">-- %</p>
+                <p class="card-value display-4 fw-bold" id="valorUmidadeSolo">
+                  -- %
+                </p>
               </div>
             </div>
           </div>
@@ -118,70 +141,93 @@
             data-sensor="temperaturaDoAr"
             data-label="Temperatura do Ar"
           >
-            <div class="card text-center h-100">
+            <div class="card text-center h-100 shadow-sm">
               <div
                 class="card-body p-4 d-flex flex-column justify-content-center"
               >
-                <h5 class="card-title">
+                <h5 class="card-title text-danger">
                   <i class="bi bi-thermometer-half"></i> Temperatura do Ar
                 </h5>
-                <p class="card-value display-4" id="valorTemperaturaAr">
+                <p class="card-value display-4 fw-bold" id="valorTemperaturaAr">
                   -- °C
                 </p>
               </div>
             </div>
           </div>
+
           <div
             class="col-lg col-md-6 card-sensor"
             id="colET"
-            data-sensor="evapotranspiracao"
-            data-label="Evapotranspiração (ET₀)"
+            data-sensor="evapotranspiracaoCultura"
+            data-label="Evapotranspiração da Cultura (ETc)"
           >
-            <div class="card text-center h-100">
+            <div class="card text-center h-100 shadow-sm">
+              <div
+                class="card-body p-4 d-flex flex-column justify-content-center"
+              >
+                <h5 class="card-title text-info">
+                  <i class="bi bi-water"></i> ETc (Cultura)
+                </h5>
+                <p class="card-value display-4 fw-bold" id="valorET">--</p>
+                <small class="text-muted" id="detalhesET">mm/dia (Kc=--)</small>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="col-lg col-md-6 card-sensor d-none"
+            id="colETc"
+            data-sensor="evapotranspiracao"
+            data-label="Evapotranspiração Ref. (ET₀)"
+          >
+            <div class="card text-center h-100 shadow-sm">
               <div
                 class="card-body p-4 d-flex flex-column justify-content-center"
               >
                 <h5 class="card-title">
-                  <i class="bi bi-cloud-sun"></i> Evapotranspiração (ET₀)
+                  <i class="bi bi-cloud-sun"></i> ET₀ (Ref.)
                 </h5>
-                <p class="card-value display-4" id="valorET">--</p>
-                <small class="text-muted">mm/dia</small>
+                <p class="card-value display-4 fw-bold" id="valorETc">--</p>
+                <small class="text-muted" id="detalhesETc">mm/dia</small>
               </div>
             </div>
           </div>
+
           <div
             class="col-lg col-md-6 card-sensor"
             id="colUmidadeAr"
             data-sensor="umidadeDoAr"
             data-label="Umidade do Ar"
           >
-            <div class="card text-center h-100">
+            <div class="card text-center h-100 shadow-sm">
               <div
                 class="card-body p-4 d-flex flex-column justify-content-center"
               >
-                <h5 class="card-title">
+                <h5 class="card-title text-secondary">
                   <i class="bi bi-droplet-half"></i> Umidade do Ar
                 </h5>
-                <p class="card-value display-4" id="valorUmidadeAr">-- %</p>
+                <p class="card-value display-4 fw-bold" id="valorUmidadeAr">
+                  -- %
+                </p>
               </div>
             </div>
           </div>
           <div class="col-lg col-md-6" id="colStatusBomba">
-            <div class="card text-center h-100" id="cardStatusBomba">
+            <div class="card text-center h-100 shadow-sm" id="cardStatusBomba">
               <div
                 class="card-body p-4 d-flex flex-column justify-content-center"
               >
-                <h5 class="card-title">
-                  <i class="bi bi-water"></i> Status da Bomba
+                <h5 class="card-title text-warning">
+                  <i class="bi bi-power"></i> Status da Bomba
                 </h5>
-                <p class="card-value fs-1" id="statusBomba">--</p>
+                <p class="card-value fs-1 fw-bold" id="statusBomba">--</p>
               </div>
             </div>
           </div>
         </div>
         <div class="row g-4 mt-2">
           <div class="col-lg-4">
-            <div class="card">
+            <div class="card shadow-sm">
               <div class="card-header bg-white fw-bold">Controle Manual</div>
               <div class="card-body d-grid gap-3 p-4">
                 <button class="btn btn-success btn-lg" id="ligarBombaBtn">
@@ -195,17 +241,17 @@
           </div>
 
           <div class="col-lg-8">
-            <div class="card h-100">
+            <div class="card h-100 shadow-sm">
               <div class="card-header bg-white fw-bold">
-                Histórico (Últimas 24 horas)
+                Histórico Geral (Últimas 24 horas)
               </div>
-              <div class="card-body p-4" style="min-height: 400px">
+              <div class="card-body p-4 chart-container">
                 <canvas id="graficoHistorico"></canvas>
               </div>
             </div>
           </div>
         </div>
-        <div class="card mt-4">
+        <div class="card mt-4 shadow-sm">
           <div class="card-header bg-white fw-bold">
             Log de Eventos de Irrigação (Últimos 10)
           </div>
@@ -250,7 +296,7 @@
             <form id="formAdicionarSistema">
               <div class="mb-3">
                 <label for="nome_sistema" class="form-label"
-                  >Nome para o Sistema <span class="text-danger">*</span></label
+                  >Nome do Sistema <span class="text-danger">*</span></label
                 ><input
                   type="text"
                   class="form-control"
@@ -261,8 +307,7 @@
               </div>
               <div class="mb-3">
                 <label for="channel_id" class="form-label"
-                  >ID do Canal ThingSpeak
-                  <span class="text-danger">*</span></label
+                  >ID Canal ThingSpeak <span class="text-danger">*</span></label
                 ><input
                   type="text"
                   class="form-control"
@@ -272,8 +317,7 @@
               </div>
               <div class="mb-3">
                 <label for="read_api_key" class="form-label"
-                  >Chave de API de Leitura (Read API Key)
-                  <span class="text-danger">*</span></label
+                  >Chave API Leitura <span class="text-danger">*</span></label
                 ><input
                   type="text"
                   class="form-control"
@@ -292,7 +336,7 @@
               Cancelar</button
             ><button
               type="submit"
-              class="btn btn-primary"
+              class="btn btn-success"
               form="formAdicionarSistema"
             >
               Salvar Sistema
@@ -337,8 +381,7 @@
               </div>
               <div class="mb-3">
                 <label for="edit_channel_id" class="form-label"
-                  >ID do Canal ThingSpeak
-                  <span class="text-danger">*</span></label
+                  >ID Canal ThingSpeak <span class="text-danger">*</span></label
                 ><input
                   type="text"
                   class="form-control"
@@ -348,8 +391,7 @@
               </div>
               <div class="mb-3">
                 <label for="edit_read_api_key" class="form-label"
-                  >Chave de API de Leitura
-                  <span class="text-danger">*</span></label
+                  >Chave API Leitura <span class="text-danger">*</span></label
                 ><input
                   type="text"
                   class="form-control"
@@ -419,13 +461,12 @@
           </div>
           <div class="modal-body">
             <p class="text-muted small">
-              Defina o que cada "Field" do seu canal ThingSpeak representa (ex:
-              Temperatura, Umidade). Deixe em branco ou escreva "Nenhum" para
-              ignorar um campo.
+              Defina o que cada "Field" do seu canal ThingSpeak representa.
+              Deixe em branco ou escreva "Nenhum" para ignorar.
             </p>
             <form id="formMapeamento">
-              <div class="row mb-2 g-2 align-items-center" data-field="1">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 1:</label
                 >
                 <div class="col-sm-6">
@@ -445,8 +486,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="2">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 2:</label
                 >
                 <div class="col-sm-6">
@@ -466,8 +507,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="3">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 3:</label
                 >
                 <div class="col-sm-6">
@@ -487,8 +528,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="4">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 4:</label
                 >
                 <div class="col-sm-6">
@@ -508,8 +549,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="5">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 5:</label
                 >
                 <div class="col-sm-6">
@@ -529,8 +570,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="6">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 6:</label
                 >
                 <div class="col-sm-6">
@@ -550,8 +591,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="7">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 7:</label
                 >
                 <div class="col-sm-6">
@@ -571,8 +612,8 @@
                   />
                 </div>
               </div>
-              <div class="row mb-2 g-2 align-items-center" data-field="8">
-                <label class="col-sm-2 col-form-label text-end fw-bold"
+              <div class="row mb-2 g-2 align-items-center">
+                <label class="col-sm-2 col-form-label text-sm-end fw-bold"
                   >Field 8:</label
                 >
                 <div class="col-sm-6">
@@ -633,7 +674,7 @@
           <div class="modal-body">
             <div class="d-flex justify-content-center mb-3">
               <div
-                class="btn-group"
+                class="btn-group shadow-sm"
                 role="group"
                 id="intervaloGraficoBtns"
                 aria-label="Seleção de intervalo"
@@ -649,7 +690,6 @@
                 <label class="btn btn-outline-primary" for="intervalo1d"
                   >Últimas 24h</label
                 >
-
                 <input
                   type="radio"
                   class="btn-check"
@@ -662,7 +702,6 @@
                 <label class="btn btn-outline-primary" for="intervalo7d"
                   >Últimos 7 dias</label
                 >
-
                 <input
                   type="radio"
                   class="btn-check"
@@ -676,7 +715,7 @@
                 >
               </div>
             </div>
-            <div style="position: relative; height: 400px; width: 100%">
+            <div class="chart-container border rounded p-2">
               <canvas id="canvasGraficoDetalhado"></canvas>
             </div>
           </div>

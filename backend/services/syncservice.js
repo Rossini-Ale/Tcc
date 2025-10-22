@@ -5,7 +5,8 @@ const pool = require("../config/db");
 // --- Constantes e Funções Auxiliares de ET ---
 
 // !!! IMPORTANTE: AJUSTE A LATITUDE PARA A SUA LOCALIDADE !!!
-const LATITUDE_PADRAO_GRAUS = -23.55; // <-- AJUSTE AQUI (Ex: São Paulo)
+// Exemplo: São Paulo ≈ -23.55
+const LATITUDE_PADRAO_GRAUS = -23.55; // <-- AJUSTE AQUI
 
 // !!! IMPORTANTE: AJUSTE O LIMITE DE ETc ACUMULADO PARA IRRIGAR !!!
 const IRRIGATION_THRESHOLD_MM = 5.0; // <-- AJUSTE AQUI (Ex: Irrigar quando acumular 5mm)
@@ -23,10 +24,10 @@ function calcularRadiacaoExtraterrestre(latitudeGraus, diaJuliano) {
   const Gsc = 0.082; // Constante solar em MJ/m²/min
   const PI = Math.PI;
   const phi = latitudeGraus * (PI / 180); // Latitude em radianos
-  const dr = 1 + 0.033 * Math.cos(((2 * PI) / 365) * diaJuliano); // Distância relativa Terra-Sol
+  const dr = 1 + 0.033 * Math.cos(((2 * PI) / 365) * diaJuliano); // Distância relativa
   const delta = 0.409 * Math.sin(((2 * PI) / 365) * diaJuliano - 1.39); // Declinação solar (rad)
   const cosWs = -Math.tan(phi) * Math.tan(delta);
-  const ws = Math.acos(Math.max(-1, Math.min(1, cosWs))); // Ângulo horário do pôr do sol (rad)
+  const ws = Math.acos(Math.max(-1, Math.min(1, cosWs))); // Ângulo horário pôr do sol (rad)
   const Ra =
     ((24 * 60) / PI) *
     Gsc *
@@ -36,16 +37,15 @@ function calcularRadiacaoExtraterrestre(latitudeGraus, diaJuliano) {
   return Ra > 0 ? Ra : 0; // Garante Ra >= 0 (MJ/m²/dia)
 }
 
-// Função para buscar leituras de temperatura (Tmax, Tmin, Tavg) das últimas 24h
+// Função para buscar leituras de temperatura (Tavg) das últimas 24h
 async function buscarLeiturasDoDiaET(sistemaId, dataReferencia, connection) {
   const dataFim = new Date(dataReferencia);
   const dataInicio = new Date(dataReferencia);
   dataInicio.setHours(dataInicio.getHours() - 24);
 
+  // Query busca AVG de leituras mapeadas como temperatura
   const sql = `
-        SELECT
-            mt.tipo_leitura, AVG(l.valor) as valor_medio,
-            MAX(l.valor) as valor_max, MIN(l.valor) as valor_min
+        SELECT mt.tipo_leitura, AVG(l.valor) as valor_medio
         FROM Leituras l
         JOIN Mapeamento_ThingSpeak mt ON l.mapeamento_id = mt.id
         WHERE mt.sistema_id = ? AND l.timestamp BETWEEN ? AND ?
@@ -58,78 +58,30 @@ async function buscarLeiturasDoDiaET(sistemaId, dataReferencia, connection) {
       dataInicio,
       dataFim,
     ]);
-    const leituras = {};
-    rows.forEach((row) => {
-      leituras[row.tipo_leitura] = {
-        medio: row.valor_medio,
-        max: row.valor_max,
-        min: row.valor_min,
-      };
-    });
+    let Tavg;
+    // Prioriza mapeamento que contenha ' ar' ou 'ambiente' ou 'média' (case-insensitive)
+    const rowTavg =
+      rows.find(
+        (r) =>
+          r.tipo_leitura.toLowerCase().includes(" ar") ||
+          r.tipo_leitura.toLowerCase().includes("ambiente") ||
+          r.tipo_leitura.toLowerCase().includes("média")
+      ) || rows[0];
 
-    let Tmax, Tmin, Tavg;
-    const chaves = Object.keys(leituras);
-    const chaveTmax =
-      chaves.find((k) => k.toLowerCase().includes("maxima")) ||
-      chaves.find((k) => k.toLowerCase().includes("temperatura"));
-    const chaveTmin =
-      chaves.find((k) => k.toLowerCase().includes("minima")) ||
-      chaves.find((k) => k.toLowerCase().includes("temperatura"));
-    const chaveTavg =
-      chaves.find(
-        (k) =>
-          k.toLowerCase().includes(" ar") ||
-          k.toLowerCase().includes("ambiente") ||
-          k.toLowerCase().includes("média")
-      ) ||
-      chaveTmax ||
-      chaveTmin;
-
-    Tmax =
-      chaveTmax && leituras[chaveTmax]?.max !== null
-        ? parseFloat(leituras[chaveTmax]?.max)
-        : undefined;
-    Tmin =
-      chaveTmin && leituras[chaveTmin]?.min !== null
-        ? parseFloat(leituras[chaveTmin]?.min)
-        : undefined;
     Tavg =
-      chaveTavg && leituras[chaveTavg]?.medio !== null
-        ? parseFloat(leituras[chaveTavg]?.medio)
+      rowTavg && rowTavg.valor_medio !== null
+        ? parseFloat(rowTavg.valor_medio)
         : undefined;
 
-    if (Tmax === undefined && chaveTavg && leituras[chaveTavg]?.max !== null)
-      Tmax = parseFloat(leituras[chaveTavg]?.max);
-    if (Tmin === undefined && chaveTavg && leituras[chaveTavg]?.min !== null)
-      Tmin = parseFloat(leituras[chaveTavg]?.min);
-    if (Tavg === undefined && Tmax !== undefined && Tmin !== undefined)
-      Tavg = (Tmax + Tmin) / 2;
-
-    const tmaxValido = Tmax !== undefined && !isNaN(Tmax);
-    const tminValido = Tmin !== undefined && !isNaN(Tmin);
     const tavgValido = Tavg !== undefined && !isNaN(Tavg);
 
-    if (tmaxValido && tminValido && tavgValido) {
-      if (Tmax < Tmin) {
-        console.warn(
-          `  -> Aviso: Tmax (${Tmax.toFixed(1)}) < Tmin (${Tmin.toFixed(
-            1
-          )}). Invertendo.`
-        );
-        [Tmax, Tmin] = [Tmin, Tmax];
-      }
-      console.log(
-        `  -> Leituras Temp: Tmax=${Tmax.toFixed(1)}°C, Tmin=${Tmin.toFixed(
-          1
-        )}°C, Tavg=${Tavg.toFixed(1)}°C`
-      );
-      return { Tmax, Tmin, Tavg };
+    if (tavgValido) {
+      console.log(`  -> Leitura Temp Média (Tavg): ${Tavg.toFixed(1)}°C`);
+      return { Tavg }; // Retorna apenas Tavg, necessário para Camargo
     } else {
-      let msg = "  -> Leituras Temp insuficientes/inválidas:";
-      if (tmaxValido) msg += ` Tmax=${Tmax.toFixed(1)}`;
-      if (tminValido) msg += ` Tmin=${Tmin.toFixed(1)}`;
-      if (tavgValido) msg += ` Tavg=${Tavg.toFixed(1)}`;
-      console.warn(msg + ". Verifique mapeamento/dados.");
+      console.warn(
+        "  -> Leitura de temperatura média (Tavg) não encontrada ou inválida. Verifique mapeamento/dados."
+      );
       return null;
     }
   } catch (error) {
@@ -141,31 +93,23 @@ async function buscarLeiturasDoDiaET(sistemaId, dataReferencia, connection) {
   }
 }
 
-// --- Funções de Cálculo ET₀ ---
-function calcularET0_HargreavesSamani(Tmax, Tmin, Tavg, Ra) {
-  if (
-    [Tmax, Tmin, Tavg, Ra].some(
-      (v) => v === undefined || v === null || isNaN(v)
-    )
-  ) {
-    console.warn("   - Dados insuficientes para Hargreaves-Samani.");
-    return null;
-  }
-  const deltaT = Math.max(0, Tmax - Tmin);
-  const kRs = 0.16; // Ajuste se necessário (0.16 interior, 0.19 costa)
-  const et0 = 0.0023 * kRs * Math.sqrt(deltaT) * (Tavg + 17.8) * (Ra / 2.45);
-  return et0 >= 0 ? et0 : 0; // mm/dia
-}
-
+// --- Função de Cálculo ET₀ (APENAS CAMARGO) ---
 function calcularET0_Camargo(Tavg, Ra) {
   if ([Tavg, Ra].some((v) => v === undefined || v === null || isNaN(v))) {
-    console.warn("   - Dados insuficientes para Camargo.");
+    console.warn("   - Dados insuficientes para Camargo (Tavg, Ra).");
     return null;
   }
   const F = 0.01; // Fator de Camargo (ajuste regional se necessário)
   const Q0_cal_cm2_dia = Ra * 23.9; // Converte Ra MJ m⁻² dia⁻¹ -> cal cm⁻² dia⁻¹
-  const et0 = F * Q0_cal_cm2_dia * Tavg;
-  return et0 >= 0 ? et0 : 0; // mm/dia
+  const et0 = F * Q0_cal_cm2_dia * Tavg; // Fórmula: ETp = F * Q0 * T * ND (ND=1 para diário)
+  // Verifica se o resultado é um número e não negativo
+  const et0Final = !isNaN(et0) && et0 >= 0 ? et0 : 0;
+  if (isNaN(et0)) {
+    console.warn(
+      `   - Resultado do cálculo de Camargo foi NaN (Tavg=${Tavg}, Ra=${Ra}). Retornando 0.`
+    );
+  }
+  return et0Final; // mm/dia
 }
 
 // --- Função para Obter Kc da Cultura ---
@@ -177,12 +121,12 @@ async function obterKcCultura(culturaId, diasDesdePlantio, connection) {
       `SELECT fase, duracao_dias, valor as kc_valor
              FROM Parametros_Cultura
              WHERE cultura_id = ? AND parametro = 'kc'
-             ORDER BY id`,
+             ORDER BY id`, // Assume ID = ordem das fases
       [culturaId]
     );
     if (fases.length === 0) {
       console.warn(
-        `  -> Nenhuma fase com 'kc' encontrada para cultura ID ${culturaId}.`
+        `  -> Nenhuma fase com 'kc' encontrada para cultura ID ${culturaId}. Verifique a tabela Parametros_Cultura.`
       );
       return null;
     }
@@ -192,7 +136,7 @@ async function obterKcCultura(culturaId, diasDesdePlantio, connection) {
       const kc = parseFloat(fase.kc_valor);
       if (isNaN(duracao) || isNaN(kc)) {
         console.warn(
-          `  -> Dados inválidos (duração/Kc) fase '${fase.fase}' cultura ${culturaId}.`
+          `  -> Dados inválidos (duração/Kc) fase '${fase.fase}' cultura ${culturaId}. Pulando fase.`
         );
         continue;
       }
@@ -206,6 +150,7 @@ async function obterKcCultura(culturaId, diasDesdePlantio, connection) {
         return { kc: kc, fase: fase.fase };
       }
     }
+    // Usa a última fase válida se passou de todas
     const ultimaFaseValida = fases
       .slice()
       .reverse()
@@ -225,7 +170,11 @@ async function obterKcCultura(culturaId, diasDesdePlantio, connection) {
       return null;
     }
   } catch (error) {
-    console.error(`  -> Erro obter Kc cultura ${culturaId}:`, error);
+    if (error.code === "ER_BAD_FIELD_ERROR")
+      console.error(
+        `  -> Erro SQL obter Kc: Coluna não encontrada. Verifique query/tabela. Detalhes: ${error.sqlMessage}`
+      );
+    else console.error(`  -> Erro obter Kc cultura ${culturaId}:`, error);
     return null;
   }
 }
@@ -249,7 +198,7 @@ async function syncAndAutomate() {
       console.log(
         `--- Processando sistema: "${sistema.nome_sistema}" (ID: ${sistema.id}) ---`
       );
-      let etcCalculadoHoje = null;
+      let etcCalculadoHoje = null; // Guarda o valor de ETc calculado nesta execução
 
       // --- 1. Sincronização com ThingSpeak ---
       if (sistema.thingspeak_channel_id && sistema.thingspeak_read_apikey) {
@@ -333,7 +282,7 @@ async function syncAndAutomate() {
         console.log("  -> Sem config. ThingSpeak.");
       }
 
-      // --- 2. Cálculo de ET₀ e ETc ---
+      // --- 2. Cálculo de ET₀ e ETc (Apenas Camargo) ---
       const hoje = new Date();
       const diaJuliano = calcularDiaJuliano(hoje);
       const latitude = LATITUDE_PADRAO_GRAUS; // !!! AJUSTE !!!
@@ -341,110 +290,100 @@ async function syncAndAutomate() {
         sistema.id,
         hoje,
         connection
-      );
+      ); // Busca Tavg
       let et0Calculado = null;
       let metodoET0Utilizado = null;
 
-      if (leiturasTemp) {
+      if (leiturasTemp && leiturasTemp.Tavg !== undefined) {
         const Ra = calcularRadiacaoExtraterrestre(latitude, diaJuliano);
         if (!isNaN(Ra)) {
-          console.log(`  -> Calculando ET₀ | Ra: ${Ra.toFixed(2)} MJ/m²/dia`);
-          const et0_HS = calcularET0_HargreavesSamani(
-            leiturasTemp.Tmax,
-            leiturasTemp.Tmin,
-            leiturasTemp.Tavg,
-            Ra
+          console.log(
+            `  -> Calculando ET₀ (Camargo) | Ra: ${Ra.toFixed(2)} MJ/m²/dia`
           );
-          if (et0_HS !== null && et0_HS >= 0) {
-            et0Calculado = et0_HS;
-            metodoET0Utilizado = "Hargreaves-Samani";
-            console.log(`   - ET₀ (H-S): ${et0_HS.toFixed(4)} mm/dia`);
-          } else {
-            console.log(`   - Falha H-S. Tentando Camargo...`);
-            const et0_Camargo = calcularET0_Camargo(leiturasTemp.Tavg, Ra);
-            if (et0_Camargo !== null && et0_Camargo >= 0) {
-              et0Calculado = et0_Camargo;
-              metodoET0Utilizado = "Camargo";
-              console.log(
-                `   - ET₀ (Camargo): ${et0_Camargo.toFixed(4)} mm/dia`
+          const et0_Camargo = calcularET0_Camargo(leiturasTemp.Tavg, Ra);
+          if (et0_Camargo !== null && et0_Camargo >= 0) {
+            et0Calculado = et0_Camargo;
+            metodoET0Utilizado = "Camargo";
+            console.log(`   - ET₀ (Camargo): ${et0_Camargo.toFixed(4)} mm/dia`);
+
+            // Salvar ET₀
+            try {
+              // Se quiser manter histórico de ET0, comente a linha DELETE abaixo
+              // await connection.query('DELETE FROM Calculos_ET WHERE sistema_id = ?', [sistema.id]);
+              await connection.query(
+                "INSERT INTO Calculos_ET (sistema_id, valor_et_calculado, metodo_et, timestamp_calculo) VALUES (?, ?, ?, NOW())",
+                [sistema.id, et0Calculado, metodoET0Utilizado]
               );
-            } else {
-              console.log(`   - Falha Camargo.`);
+              console.log(`  -> ET₀ (${metodoET0Utilizado}) salvo.`);
+            } catch (error) {
+              console.error(`  -> Erro ao salvar ET₀:`, error);
             }
+
+            // Calcular e Salvar ETc (só se ET0 foi calculado)
+            if (sistema.cultura_id_atual && sistema.data_plantio) {
+              const dataPlantio = new Date(sistema.data_plantio);
+              // Verifica se a data de plantio é válida e não no futuro
+              if (!isNaN(dataPlantio.getTime()) && dataPlantio <= hoje) {
+                const diffTime = Math.abs(hoje - dataPlantio);
+                const diasDesdePlantio = Math.max(
+                  0,
+                  Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+                );
+                console.log(`  -> Dias desde plantio: ${diasDesdePlantio}`);
+                const infoKc = await obterKcCultura(
+                  sistema.cultura_id_atual,
+                  diasDesdePlantio,
+                  connection
+                );
+
+                if (infoKc && infoKc.kc) {
+                  etcCalculadoHoje = et0Calculado * infoKc.kc; // Armazena ETc de HOJE
+                  console.log(
+                    `  -> Fase: ${infoKc.fase}, Kc: ${infoKc.kc.toFixed(
+                      2
+                    )}, ETc Hoje: ${etcCalculadoHoje.toFixed(4)} mm`
+                  );
+                  try {
+                    // Se quiser manter histórico de ETc, comente a linha DELETE abaixo
+                    // await connection.query('DELETE FROM Calculos_ETc WHERE sistema_id = ?', [sistema.id]);
+                    await connection.query(
+                      "INSERT INTO Calculos_ETc (sistema_id, valor_etc_calculado, kc_utilizado, fase_cultura, dias_desde_plantio, timestamp_calculo) VALUES (?, ?, ?, ?, ?, NOW())",
+                      [
+                        sistema.id,
+                        etcCalculadoHoje,
+                        infoKc.kc,
+                        infoKc.fase,
+                        diasDesdePlantio,
+                      ]
+                    );
+                    console.log(`  -> ETc salvo.`);
+                  } catch (error) {
+                    console.error(`  -> Erro ao salvar ETc:`, error);
+                  }
+                } else {
+                  console.warn(
+                    `  -> Não foi possível obter Kc. Cálculo ETc pulado.`
+                  );
+                }
+              } else {
+                console.log(
+                  "  -> Data de plantio inválida ou no futuro. Cálculo ETc pulado."
+                );
+                etcCalculadoHoje = null;
+              } // Garante que ETc não seja usado na automação
+            } else {
+              console.log("  -> Sem cultura/data plantio. Cálculo ETc pulado.");
+            }
+          } else {
+            console.log(`   - Falha no cálculo de Camargo.`);
           }
         } else {
           console.warn("  -> Falha ao calcular Ra.");
         }
       } else {
-        console.log("  -> Sem leituras Temp para ET₀.");
-      }
-
-      // Salvar ET₀
-      if (et0Calculado !== null) {
-        try {
-          // REMOVA a linha DELETE abaixo se quiser manter histórico de ET0
-          await connection.query(
-            "DELETE FROM Calculos_ET WHERE sistema_id = ?",
-            [sistema.id]
-          );
-          await connection.query(
-            "INSERT INTO Calculos_ET (sistema_id, valor_et_calculado, metodo_et, timestamp_calculo) VALUES (?, ?, ?, NOW())",
-            [sistema.id, et0Calculado, metodoET0Utilizado]
-          );
-          console.log(`  -> ET₀ (${metodoET0Utilizado}) salvo.`);
-        } catch (error) {
-          console.error(`  -> Erro ao salvar ET₀:`, error);
-        }
-
-        // Calcular e Salvar ETc
-        if (sistema.cultura_id_atual && sistema.data_plantio) {
-          const dataPlantio = new Date(sistema.data_plantio);
-          const diffTime = Math.abs(hoje - dataPlantio);
-          const diasDesdePlantio = Math.max(
-            0,
-            Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-          );
-          const infoKc = await obterKcCultura(
-            sistema.cultura_id_atual,
-            diasDesdePlantio,
-            connection
-          );
-
-          if (infoKc && infoKc.kc) {
-            etcCalculadoHoje = et0Calculado * infoKc.kc; // Armazena ETc de HOJE
-            console.log(
-              `  -> Fase: ${infoKc.fase}, Kc: ${infoKc.kc.toFixed(
-                2
-              )}, ETc Hoje: ${etcCalculadoHoje.toFixed(4)} mm`
-            );
-            try {
-              // REMOVA a linha DELETE abaixo se quiser manter histórico de ETc
-              await connection.query(
-                "DELETE FROM Calculos_ETc WHERE sistema_id = ?",
-                [sistema.id]
-              );
-              await connection.query(
-                "INSERT INTO Calculos_ETc (sistema_id, valor_etc_calculado, kc_utilizado, fase_cultura, dias_desde_plantio, timestamp_calculo) VALUES (?, ?, ?, ?, ?, NOW())",
-                [
-                  sistema.id,
-                  etcCalculadoHoje,
-                  infoKc.kc,
-                  infoKc.fase,
-                  diasDesdePlantio,
-                ]
-              );
-              console.log(`  -> ETc salvo.`);
-            } catch (error) {
-              console.error(`  -> Erro ao salvar ETc:`, error);
-            }
-          } else {
-            console.warn(`  -> Não foi possível obter Kc. Cálculo ETc pulado.`);
-          }
-        } else {
-          console.log("  -> Sem cultura/data plantio. Cálculo ETc pulado.");
-        }
-      } else {
-        console.warn(`  -> Cálculo de ET₀ falhou. ETc não calculado.`);
+        console.log(
+          "  -> Leituras de temperatura insuficientes para ET₀ (Camargo)."
+        );
       }
 
       // --- 3. Automação da Irrigação Baseada em ETc Acumulado ---
@@ -454,7 +393,6 @@ async function syncAndAutomate() {
         sistema.cultura_id_atual &&
         sistema.data_plantio
       ) {
-        // Permite ETc=0
         console.log("  -> Verificando irrigação por ETc acumulado...");
         const inicioAcumulacao = sistema.last_etc_irrigation_timestamp
           ? new Date(sistema.last_etc_irrigation_timestamp)
@@ -466,7 +404,6 @@ async function syncAndAutomate() {
         console.log(`   - Última irrigação ETc: ${ultimaIrrigacaoStr}`);
 
         // Busca ETc DESDE a última irrigação por ETc
-        // Funciona se você MANTÉM histórico ou NÃO (se não mantém, só retornará o de hoje)
         const [etcRecords] = await connection.query(
           `SELECT valor_etc_calculado FROM Calculos_ETc WHERE sistema_id = ? AND timestamp_calculo > ? ORDER BY timestamp_calculo ASC`,
           [sistema.id, inicioAcumulacao]
@@ -489,13 +426,11 @@ async function syncAndAutomate() {
         ) {
           console.log("   - Limite ETc atingido! Acionando irrigação.");
           try {
-            await connection.beginTransaction(); // Transação para garantir consistência
-            // Atualiza comando e timestamp
+            await connection.beginTransaction();
             await connection.query(
               "UPDATE Sistemas_Irrigacao SET comando_irrigacao = 'LIGAR', last_etc_irrigation_timestamp = NOW() WHERE id = ?",
               [sistema.id]
             );
-            // Registra evento
             await connection.query(
               "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, timestamp) VALUES (?, ?, ?, NOW())",
               [
@@ -516,8 +451,6 @@ async function syncAndAutomate() {
           }
         } else if (accumulatedEtc < IRRIGATION_THRESHOLD_MM) {
           console.log("   - Limite ETc não atingido.");
-          // OPCIONAL: Desligar se estava ligada por ETc e ETc acumulado < threshold (ex: após chuva)?
-          // CUIDADO: Esta lógica pode ser complexa. Por ora, não faremos nada se não atingir.
         } else if (sistema.comando_irrigacao === "LIGAR") {
           console.log("   - Limite ETc atingido, mas bomba já LIGADA.");
         }
@@ -542,12 +475,12 @@ async function syncAndAutomate() {
 
 // --- FUNÇÃO PARA INICIAR O AGENDADOR ---
 function startSyncSchedule() {
-  cron.schedule("*/5 * * * *", syncAndAutomate); // A cada 5 minutos (para teste)
-  // cron.schedule('0 6 * * *', syncAndAutomate); // Todo dia às 6 da manhã
+  // cron.schedule("*/5 * * * *", syncAndAutomate); // A cada 5 minutos (para teste)
+  cron.schedule("0 6 * * *", syncAndAutomate); // Todo dia às 6 da manhã <-- AJUSTE AQUI SE NECESSÁRIO
   console.log(
-    "Agendador de sincronização, cálculos (ET0/ETc) e Automação ETc iniciado."
+    "Agendador de sincronização, cálculos (ET0 Camargo/ETc) e Automação ETc iniciado (diariamente às 06:00)."
   );
-  // syncAndAutomate(); // Descomente para testar imediatamente
+  syncAndAutomate(); // Descomente para executar uma vez ao iniciar (teste)
 }
 
 module.exports = { startSyncSchedule };
