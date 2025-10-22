@@ -355,7 +355,7 @@ router.post("/sistemas/:sistemaId/comando", async (req, res) => {
 
     // Registrar o evento de irrigação manual
     await pool.query(
-      'INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, "timestamp") VALUES (?, ?, ?, NOW())', // Usando timestamp do DB
+      "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, `timestamp`) VALUES (?, ?, ?, NOW())", // Usando timestamp do DB
       [sistemaId, `${comando}_MANUAL`, "Acionamento via dashboard"]
     );
 
@@ -456,7 +456,7 @@ router.get("/sistemas/:sistemaId/eventos", async (req, res) => {
 
     // Busca os últimos 10 eventos
     const [eventos] = await pool.query(
-      'SELECT id, acao, motivo, duracao_segundos, "timestamp" FROM Eventos_Irrigacao WHERE sistema_id = ? ORDER BY "timestamp" DESC LIMIT 10',
+      "SELECT id, acao, motivo, duracao_segundos, `timestamp` FROM Eventos_Irrigacao WHERE sistema_id = ? ORDER BY `timestamp` DESC LIMIT 10",
       [sistemaId]
     );
     res.json(eventos);
