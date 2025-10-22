@@ -5,7 +5,6 @@ const pool = require("../config/db");
 // --- Constantes e Funções Auxiliares de ET ---
 
 // !!! IMPORTANTE: AJUSTE A LATITUDE PARA A SUA LOCALIDADE !!!
-// Exemplo: São Paulo ≈ -23.55
 const LATITUDE_PADRAO_GRAUS = -23.55; // <-- AJUSTE AQUI
 
 // !!! IMPORTANTE: AJUSTE O LIMITE DE ETc ACUMULADO PARA IRRIGAR !!!
@@ -93,16 +92,22 @@ async function buscarLeiturasDoDiaET(sistemaId, dataReferencia, connection) {
   }
 }
 
-// --- Função de Cálculo ET₀ (APENAS CAMARGO) ---
+// --- Função de Cálculo ET₀ (APENAS CAMARGO - CORRIGIDA) ---
 function calcularET0_Camargo(Tavg, Ra) {
   if ([Tavg, Ra].some((v) => v === undefined || v === null || isNaN(v))) {
     console.warn("   - Dados insuficientes para Camargo (Tavg, Ra).");
     return null;
   }
-  const F = 0.01; // Fator de Camargo (ajuste regional se necessário)
-  const Q0_cal_cm2_dia = Ra * 23.9; // Converte Ra MJ m⁻² dia⁻¹ -> cal cm⁻² dia⁻¹
-  const et0 = F * Q0_cal_cm2_dia * Tavg; // Fórmula: ETp = F * Q0 * T * ND (ND=1 para diário)
-  // Verifica se o resultado é um número e não negativo
+
+  const F = 0.01; // Fator de Camargo (empírico, ajuste regional se necessário)
+
+  // *** CORREÇÃO: Converter Ra (MJ/m²/dia) para Evaporação Equivalente (mm/dia) ***
+  // L (Calor Latente de Vaporização) ≈ 2.45 MJ/kg (ou 2.45 MJ/mm)
+  const Ra_mm_dia = Ra / 2.45;
+
+  // Fórmula simplificada: ET₀ = F * Tavg * Ra_mm_dia
+  const et0 = F * Tavg * Ra_mm_dia;
+
   const et0Final = !isNaN(et0) && et0 >= 0 ? et0 : 0;
   if (isNaN(et0)) {
     console.warn(
@@ -172,7 +177,7 @@ async function obterKcCultura(culturaId, diasDesdePlantio, connection) {
   } catch (error) {
     if (error.code === "ER_BAD_FIELD_ERROR")
       console.error(
-        `  -> Erro SQL obter Kc: Coluna não encontrada. Verifique query/tabela. Detalhes: ${error.sqlMessage}`
+        `  -> Erro SQL obter Kc: Coluna não encontrada. Verifique query/tabela Parametros_Cultura. Detalhes: ${error.sqlMessage}`
       );
     else console.error(`  -> Erro obter Kc cultura ${culturaId}:`, error);
     return null;
@@ -295,12 +300,13 @@ async function syncAndAutomate() {
       let metodoET0Utilizado = null;
 
       if (leiturasTemp && leiturasTemp.Tavg !== undefined) {
+        // Precisa apenas de Tavg
         const Ra = calcularRadiacaoExtraterrestre(latitude, diaJuliano);
         if (!isNaN(Ra)) {
           console.log(
             `  -> Calculando ET₀ (Camargo) | Ra: ${Ra.toFixed(2)} MJ/m²/dia`
           );
-          const et0_Camargo = calcularET0_Camargo(leiturasTemp.Tavg, Ra);
+          const et0_Camargo = calcularET0_Camargo(leiturasTemp.Tavg, Ra); // Chama a função CORRIGIDA
           if (et0_Camargo !== null && et0_Camargo >= 0) {
             et0Calculado = et0_Camargo;
             metodoET0Utilizado = "Camargo";
@@ -322,13 +328,12 @@ async function syncAndAutomate() {
             // Calcular e Salvar ETc (só se ET0 foi calculado)
             if (sistema.cultura_id_atual && sistema.data_plantio) {
               const dataPlantio = new Date(sistema.data_plantio);
-              // Verifica se a data de plantio é válida e não no futuro
               if (!isNaN(dataPlantio.getTime()) && dataPlantio <= hoje) {
                 const diffTime = Math.abs(hoje - dataPlantio);
                 const diasDesdePlantio = Math.max(
-                  0,
-                  Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-                );
+                  1,
+                  Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1
+                ); // +1 para dia 1
                 console.log(`  -> Dias desde plantio: ${diasDesdePlantio}`);
                 const infoKc = await obterKcCultura(
                   sistema.cultura_id_atual,
@@ -364,13 +369,14 @@ async function syncAndAutomate() {
                   console.warn(
                     `  -> Não foi possível obter Kc. Cálculo ETc pulado.`
                   );
+                  etcCalculadoHoje = null;
                 }
               } else {
                 console.log(
                   "  -> Data de plantio inválida ou no futuro. Cálculo ETc pulado."
                 );
                 etcCalculadoHoje = null;
-              } // Garante que ETc não seja usado na automação
+              }
             } else {
               console.log("  -> Sem cultura/data plantio. Cálculo ETc pulado.");
             }
@@ -401,7 +407,7 @@ async function syncAndAutomate() {
           inicioAcumulacao.getTime() === 0
             ? "Nunca"
             : inicioAcumulacao.toLocaleString("pt-BR");
-        console.log(`   - Última irrigação ETc: ${ultimaIrrigacaoStr}`);
+        console.log(`   - Período de acumulação desde: ${ultimaIrrigacaoStr}`);
 
         // Busca ETc DESDE a última irrigação por ETc
         const [etcRecords] = await connection.query(
@@ -475,7 +481,7 @@ async function syncAndAutomate() {
 
 // --- FUNÇÃO PARA INICIAR O AGENDADOR ---
 function startSyncSchedule() {
-  // cron.schedule("*/5 * * * *", syncAndAutomate); // A cada 5 minutos (para teste)
+  cron.schedule("*/5 * * * *", syncAndAutomate); // A cada 5 minutos (para teste)
   cron.schedule("0 6 * * *", syncAndAutomate); // Todo dia às 6 da manhã <-- AJUSTE AQUI SE NECESSÁRIO
   console.log(
     "Agendador de sincronização, cálculos (ET0 Camargo/ETc) e Automação ETc iniciado (diariamente às 06:00)."

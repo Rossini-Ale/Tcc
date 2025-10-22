@@ -29,21 +29,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const valorUmidadeSoloEl = document.getElementById("valorUmidadeSolo");
   const valorTemperaturaArEl = document.getElementById("valorTemperaturaAr");
   const valorUmidadeArEl = document.getElementById("valorUmidadeAr");
-  const valorETEl = document.getElementById("valorET"); // Agora para ETc
-  const detalhesETEl = document.getElementById("detalhesET"); // Detalhes do ETc
+  const valorETEl = document.getElementById("valorET"); // Agora mostra ETc
+  const detalhesETEl = document.getElementById("detalhesET"); // Detalhes do ETc (Kc, Fase)
   const statusBombaEl = document.getElementById("statusBomba");
   const cardStatusBombaEl = document.getElementById("cardStatusBomba");
   const tabelaEventosEl = document.getElementById("tabelaEventos");
-  const canvasGraficoHistoricoEl = document.getElementById("graficoHistorico"); // Seleciona o canvas
-  let graficoHistorico; // Instância do Chart.js principal
+  const canvasGraficoHistoricoEl = document.getElementById("graficoHistorico");
+  let graficoHistorico;
   const modalAdicionarSistemaEl = document.getElementById(
     "modalAdicionarSistema"
   );
   const formAdicionarSistema = document.getElementById("formAdicionarSistema");
-  const modalSistema = new bootstrap.Modal(modalAdicionarSistemaEl);
+  let modalSistema;
   const modalEditarSistemaEl = document.getElementById("modalEditarSistema");
   const formEditarSistema = document.getElementById("formEditarSistema");
-  const modalEditar = new bootstrap.Modal(modalEditarSistemaEl);
+  let modalEditar;
   const selectCulturaNoModalEditar = document.getElementById(
     "edit_cultura_sistema"
   );
@@ -53,13 +53,13 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   const modalMapeamentoEl = document.getElementById("modalMapeamento");
   const formMapeamento = document.getElementById("formMapeamento");
-  const modalMapeamento = new bootstrap.Modal(modalMapeamentoEl);
+  let modalMapeamento;
 
-  // Seletores para Gráfico Detalhado
+  // Seletores Gráfico Detalhado
   const modalGraficoDetalhadoEl = document.getElementById(
     "modalGraficoDetalhado"
   );
-  const modalGraficoDetalhado = new bootstrap.Modal(modalGraficoDetalhadoEl);
+  let modalGraficoDetalhado;
   const modalGraficoTituloEl = document.getElementById("modalGraficoTitulo");
   const canvasGraficoDetalhadoEl = document.getElementById(
     "canvasGraficoDetalhado"
@@ -67,9 +67,23 @@ document.addEventListener("DOMContentLoaded", () => {
   const intervaloGraficoBtnsEl = document.getElementById(
     "intervaloGraficoBtns"
   );
-  let graficoDetalhado; // Instância do Chart.js detalhado
+  let graficoDetalhado;
   let sensorKeyAtualGraficoDetalhado = null;
   let sensorLabelAtualGraficoDetalhado = null;
+
+  // Inicializa Modais (com verificação)
+  try {
+    if (modalAdicionarSistemaEl)
+      modalSistema = new bootstrap.Modal(modalAdicionarSistemaEl);
+    if (modalEditarSistemaEl)
+      modalEditar = new bootstrap.Modal(modalEditarSistemaEl);
+    if (modalMapeamentoEl)
+      modalMapeamento = new bootstrap.Modal(modalMapeamentoEl);
+    if (modalGraficoDetalhadoEl)
+      modalGraficoDetalhado = new bootstrap.Modal(modalGraficoDetalhadoEl);
+  } catch (e) {
+    console.error("Erro ao inicializar modais Bootstrap:", e);
+  }
 
   // --- 3. FUNÇÕES AUXILIARES DE API ---
   async function fetchData(endpoint) {
@@ -84,7 +98,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (response.status === 204) {
         return null;
       }
-      return response.json();
+      return await response.json().catch((err) => {
+        console.error("Erro parse JSON fetchData:", err, "Endpoint:", endpoint);
+        throw new Error(`Resposta inválida do servidor`);
+      });
     } catch (error) {
       console.error(`Erro fetchData ${endpoint}:`, error);
       showErrorAlert(`Erro buscar dados: ${error.message}`);
@@ -112,12 +129,15 @@ document.addEventListener("DOMContentLoaded", () => {
         response.status === 204 ||
         response.headers.get("content-length") === "0"
       ) {
-        return { message: "Sucesso (sem conteúdo)" };
+        return { message: "Sucesso" };
       }
-      return response.json();
+      return await response.json().catch((err) => {
+        console.error("Erro parse JSON postData:", err, "Endpoint:", endpoint);
+        throw new Error(`Resposta inválida do servidor`);
+      });
     } catch (error) {
       console.error(`Erro ${method} ${endpoint}:`, error);
-      showErrorAlert(`Erro enviar dados: ${error.message}`);
+      showErrorAlert(`${error.message}`);
       throw error;
     }
   }
@@ -143,16 +163,24 @@ document.addEventListener("DOMContentLoaded", () => {
       ) {
         return { message: "Exclusão sucesso" };
       }
-      return response.json();
+      return await response.json().catch((err) => {
+        console.error(
+          "Erro parse JSON deleteData:",
+          err,
+          "Endpoint:",
+          endpoint
+        );
+        throw new Error(`Resposta inválida do servidor`);
+      });
     } catch (error) {
       console.error(`Erro deleteData ${endpoint}:`, error);
-      showErrorAlert(`Erro ao excluir: ${error.message}`);
+      showErrorAlert(`${error.message}`);
       throw error;
     }
   }
   function showErrorAlert(message) {
     alert(`Erro: ${message}`);
-  } // Adiciona "Erro:"
+  }
   function showSuccessAlert(message) {
     alert(message);
   }
@@ -162,26 +190,35 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       listaDeSistemas = (await fetchData("/api/sistemas")) || [];
       if (listaDeSistemas.length > 0) {
-        gerenciamentoSistemasEl.classList.remove("d-none");
-        dashboardContentEl.classList.remove("d-none");
-        emptyStateEl.classList.add("d-none");
+        gerenciamentoSistemasEl?.classList.remove("d-none");
+        dashboardContentEl?.classList.remove("d-none");
+        emptyStateEl?.classList.add("d-none");
         popularSeletorDeSistemas();
         const ultimoSistemaId = localStorage.getItem("ultimoSistemaId");
         sistemaIdAtivo =
           ultimoSistemaId &&
           listaDeSistemas.some((s) => s.id == ultimoSistemaId)
             ? ultimoSistemaId
-            : listaDeSistemas[0].id;
-        seletorSistemasEl.value = sistemaIdAtivo;
-        localStorage.setItem("ultimoSistemaId", sistemaIdAtivo);
-        carregarDashboardParaSistema(sistemaIdAtivo);
+            : listaDeSistemas[0]?.id;
+        if (sistemaIdAtivo && seletorSistemasEl) {
+          seletorSistemasEl.value = sistemaIdAtivo;
+          localStorage.setItem("ultimoSistemaId", sistemaIdAtivo);
+          carregarDashboardParaSistema(sistemaIdAtivo);
+        } else {
+          limparDashboard();
+          if (nomeSistemaAtivoDisplayEl)
+            nomeSistemaAtivoDisplayEl.textContent =
+              "Nenhum sistema disponível.";
+        }
       } else {
-        gerenciamentoSistemasEl.classList.add("d-none");
-        dashboardContentEl.classList.add("d-none");
-        emptyStateEl.classList.remove("d-none");
+        gerenciamentoSistemasEl?.classList.add("d-none");
+        dashboardContentEl?.classList.add("d-none");
+        emptyStateEl?.classList.remove("d-none");
         sistemaIdAtivo = null;
-        nomeSistemaAtivoDisplayEl.textContent = "Nenhum sistema cadastrado.";
+        if (nomeSistemaAtivoDisplayEl)
+          nomeSistemaAtivoDisplayEl.textContent = "Nenhum sistema cadastrado.";
         localStorage.removeItem("ultimoSistemaId");
+        limparDashboard();
       }
     } catch (error) {
       console.error("Erro fatal inicializar dashboard:", error);
@@ -189,6 +226,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   function popularSeletorDeSistemas() {
+    if (!seletorSistemasEl) return;
     seletorSistemasEl.innerHTML = "";
     listaDeSistemas.forEach((s) => {
       seletorSistemasEl.innerHTML += `<option value="${s.id}">${s.nome_sistema}</option>`;
@@ -196,21 +234,68 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   function carregarDashboardParaSistema(sistemaId) {
     if (!sistemaId) {
+      limparDashboard();
       return;
     }
     sistemaIdAtivo = sistemaId;
     localStorage.setItem("ultimoSistemaId", sistemaIdAtivo);
     const sistemaAtivo = listaDeSistemas.find((s) => s.id == sistemaId);
-    if (sistemaAtivo)
+    if (sistemaAtivo && nomeSistemaAtivoDisplayEl)
       nomeSistemaAtivoDisplayEl.textContent = `Exibindo: ${sistemaAtivo.nome_sistema}`;
-    else {
+    else if (nomeSistemaAtivoDisplayEl) {
       nomeSistemaAtivoDisplayEl.textContent = "Sistema não encontrado.";
-      if (graficoHistorico) graficoHistorico.destroy();
+      limparDashboard();
       return;
     }
     carregarDadosAtuais(sistemaId);
-    desenharGraficoHistorico(sistemaId, "1d"); // Carrega gráfico principal (padrão 1 dia)
+    desenharGraficoHistorico(sistemaId, "1d");
     carregarHistoricoEventos(sistemaId);
+    // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
+    // adicionarListenersCards();
+  }
+  function limparDashboard() {
+    [
+      valorUmidadeSoloEl,
+      valorTemperaturaArEl,
+      valorETEl,
+      valorUmidadeArEl,
+      statusBombaEl,
+      detalhesETEl,
+    ].forEach((el) => {
+      if (el) el.textContent = "--";
+    });
+    if (detalhesETEl) detalhesETEl.textContent = "mm/dia";
+    if (cardStatusBombaEl)
+      cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
+    [
+      "colUmidadeSolo",
+      "colTemperaturaAr",
+      "colET",
+      "colETc",
+      "colUmidadeAr",
+    ].forEach((id) => document.getElementById(id)?.classList.add("d-none"));
+    if (document.getElementById("colStatusBomba"))
+      document.getElementById("colStatusBomba").classList.remove("d-none");
+    if (graficoHistorico) {
+      graficoHistorico.destroy();
+      graficoHistorico = null;
+    }
+    if (canvasGraficoHistoricoEl) {
+      const mainCtx = canvasGraficoHistoricoEl.getContext("2d");
+      if (mainCtx) {
+        mainCtx.clearRect(0, 0, mainCtx.canvas.width, mainCtx.canvas.height);
+        mainCtx.textAlign = "center";
+        mainCtx.fillStyle = "#6c757d";
+        mainCtx.fillText(
+          "Selecione um sistema.",
+          mainCtx.canvas.width / 2,
+          mainCtx.canvas.height / 2
+        );
+      }
+    }
+    if (tabelaEventosEl)
+      tabelaEventosEl.innerHTML =
+        '<tr><td colspan="3" class="text-center text-muted">Selecione um sistema.</td></tr>';
   }
 
   // --- 5. FUNÇÕES DE CARREGAMENTO DE DADOS ---
@@ -235,18 +320,14 @@ document.addEventListener("DOMContentLoaded", () => {
         detailsElement = null
       ) {
         const dado = dados ? dados[dataKey] : undefined;
-        const colExists = !!colElement; // Verifica se a coluna foi encontrada no HTML
-        const valorExists = !!valorElement;
-        const detailsExists = !!detailsElement;
-
         if (dado?.valor !== undefined && dado?.valor !== null) {
-          if (colExists) colElement.classList.remove("d-none");
-          if (valorExists)
+          colElement?.classList.remove("d-none");
+          if (valorElement)
             valorElement.textContent = `${parseFloat(dado.valor).toFixed(
               casasDecimais
             )} ${dado.unidade || unidadePadrao}`;
           if (
-            detailsExists &&
+            detailsElement &&
             dado.kc !== undefined &&
             dado.fase !== undefined
           ) {
@@ -254,15 +335,18 @@ document.addEventListener("DOMContentLoaded", () => {
               dado.kc
             ).toFixed(2)}, ${dado.fase})`;
             detailsElement.classList.remove("d-none");
-          } else if (detailsExists) {
+          } else if (detailsElement) {
             detailsElement.textContent = `mm/dia`;
-            // Mantém visível por padrão, a menos que a coluna inteira seja oculta
+            detailsElement.classList.add("d-none"); // Esconde se não tiver dados Kc/Fase
           }
           return true;
         } else {
-          if (colExists) colElement.classList.add("d-none"); // Oculta coluna inteira
-          if (valorExists) valorElement.textContent = `-- ${unidadePadrao}`;
-          if (detailsExists) detailsElement.textContent = `mm/dia`; // Reseta detalhes
+          colElement?.classList.add("d-none");
+          if (valorElement) valorElement.textContent = `-- ${unidadePadrao}`;
+          if (detailsElement) {
+            detailsElement.textContent = `mm/dia`;
+            detailsElement.classList.add("d-none");
+          }
           return false;
         }
       }
@@ -281,7 +365,13 @@ document.addEventListener("DOMContentLoaded", () => {
         ].forEach((el) => {
           if (el) el.textContent = "Erro";
         });
-        cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
+        if (detalhesETEl) detalhesETEl.textContent = "mm/dia";
+        cardStatusBombaEl?.classList.remove(
+          "status-ligada",
+          "status-desligada"
+        );
+        // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
+        // adicionarListenersCards();
         return;
       }
 
@@ -303,23 +393,32 @@ document.addEventListener("DOMContentLoaded", () => {
       ); // ETc visível
       atualizarCard(colUmidadeAr, "umidadeDoAr", valorUmidadeArEl, "%");
 
-      // Garante que o card ET0 (colETc) permaneça oculto (d-none está no HTML)
-      if (colETc) colETc.classList.add("d-none");
-      // Poderia atualizar o valor dele aqui se quisesse mostrá-lo condicionalmente:
-      // atualizarCard(colETc, 'evapotranspiracao', document.getElementById("valorETc"), '', 2, document.getElementById("detalhesETc"));
+      // Atualiza card ET0 (oculto)
+      atualizarCard(
+        colETc,
+        "evapotranspiracao",
+        document.getElementById("valorETc"),
+        "",
+        2,
+        document.getElementById("detalhesETc")
+      );
+      if (colETc) colETc.classList.add("d-none"); // Garante que fica oculto
 
       // Status da Bomba
       colStatusBomba?.classList.remove("d-none");
-      cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
+      cardStatusBombaEl?.classList.remove("status-ligada", "status-desligada");
       if (dados.statusBomba === "LIGAR") {
-        statusBombaEl.textContent = "Ligada";
-        cardStatusBombaEl.classList.add("status-ligada");
+        if (statusBombaEl) statusBombaEl.textContent = "Ligada";
+        cardStatusBombaEl?.classList.add("status-ligada");
       } else if (dados.statusBomba === "DESLIGAR") {
-        statusBombaEl.textContent = "Desligada";
-        cardStatusBombaEl.classList.add("status-desligada");
+        if (statusBombaEl) statusBombaEl.textContent = "Desligada";
+        cardStatusBombaEl?.classList.add("status-desligada");
       } else {
-        statusBombaEl.textContent = "--";
+        if (statusBombaEl) statusBombaEl.textContent = "--";
       }
+
+      // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
+      // adicionarListenersCards();
     } catch (error) {
       console.error("Erro carregar dados atuais:", error);
       [colUmidadeSolo, colTemperaturaAr, colET, colETc, colUmidadeAr].forEach(
@@ -335,21 +434,30 @@ document.addEventListener("DOMContentLoaded", () => {
       ].forEach((el) => {
         if (el) el.textContent = "Erro";
       });
-      cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
+      if (detalhesETEl) detalhesETEl.textContent = "mm/dia";
+      cardStatusBombaEl?.classList.remove("status-ligada", "status-desligada");
+      // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
+      // adicionarListenersCards();
     }
   }
 
   // Função para desenhar o gráfico histórico principal
   async function desenharGraficoHistorico(sistemaId, intervalo = "1d") {
-    if (!sistemaId || !canvasGraficoHistoricoEl) return; // Verifica se o canvas existe
+    if (!sistemaId || !canvasGraficoHistoricoEl) return;
     const mainCtx = canvasGraficoHistoricoEl.getContext("2d");
-    if (!mainCtx) return;
+    if (!mainCtx) {
+      console.error("Contexto 2D gráfico principal não encontrado.");
+      return;
+    }
 
-    // Limpa e mostra 'Carregando...'
-    if (graficoHistorico) graficoHistorico.destroy();
+    if (graficoHistorico) {
+      graficoHistorico.destroy();
+      graficoHistorico = null;
+    }
     mainCtx.clearRect(0, 0, mainCtx.canvas.width, mainCtx.canvas.height);
     mainCtx.textAlign = "center";
     mainCtx.fillStyle = "#6c757d";
+    mainCtx.font = "16px sans-serif";
     mainCtx.fillText(
       "Carregando gráfico...",
       mainCtx.canvas.width / 2,
@@ -360,10 +468,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const dados = await fetchData(
         `/api/sistemas/${sistemaId}/dados-historicos?intervalo=${intervalo}`
       );
+      if (graficoHistorico) {
+        graficoHistorico.destroy();
+        graficoHistorico = null;
+      }
 
       if (!dados || dados.length === 0) {
         console.log(`Sem dados históricos (intervalo: ${intervalo}).`);
-        if (graficoHistorico) graficoHistorico.destroy(); // Garante limpeza
         mainCtx.clearRect(0, 0, mainCtx.canvas.width, mainCtx.canvas.height);
         mainCtx.textAlign = "center";
         mainCtx.fillStyle = "#6c757d";
@@ -378,11 +489,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const graficoOptions = {
         responsive: true,
         maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false }, // Melhora tooltip
+        interaction: { mode: "index", intersect: false },
         scales: {
           x: {
             type: "time",
-            grid: { display: false }, // Oculta grid X
+            grid: { display: false },
             time: {
               tooltipFormat: intervalo === "1d" ? "HH:mm" : "dd/MM HH:mm",
               unit: intervalo === "1d" ? "hour" : "day",
@@ -390,9 +501,11 @@ document.addEventListener("DOMContentLoaded", () => {
             },
             title: { display: true, text: "Hora / Data" },
           },
-          // Y scales são adicionados dinamicamente
         },
-        plugins: { legend: { position: "bottom" } }, // Legenda embaixo
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 12, padding: 15 } },
+          tooltip: { bodyFont: { size: 13 }, titleFont: { size: 15 } },
+        },
       };
 
       const datasets = [];
@@ -405,7 +518,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "#fd7e14",
         "#20c997",
         "#6610f2",
-      ]; // Cores Bootstrap
+      ];
       let corIndex = 0;
       let yAxisCount = 0;
       const chavesDeDados =
@@ -423,8 +536,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 : null,
           }))
           .filter((p) => p.y !== null && !isNaN(p.y));
-
-        if (valoresFormatados.length === 0) return; // Pula sensor sem dados
+        if (valoresFormatados.length === 0) return;
 
         let unidade = "";
         if (chave.toLowerCase().includes("temperatura")) unidade = "°C";
@@ -433,7 +545,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const yAxisID = `y${yAxisCount}`;
         const position = yAxisCount % 2 === 0 ? "left" : "right";
-        // Adapta o label para ser mais legível
         const label = `${chave
           .replace(/([A-Z])/g, " $1")
           .replace(/^./, (str) => str.toUpperCase())}`;
@@ -443,25 +554,23 @@ document.addEventListener("DOMContentLoaded", () => {
           label: label,
           data: valoresFormatados,
           borderColor: cores[corIndex % cores.length],
+          backgroundColor: cores[corIndex % cores.length] + "33",
           yAxisID,
           tension: 0.1,
           pointRadius: 1,
           borderWidth: 2,
           fill: false,
-        }); // Pontos menores, sem preenchimento
+        });
 
         graficoOptions.scales[yAxisID] = {
           position,
           title: { display: true, text: fullLabel },
           grid: { drawOnChartArea: yAxisCount === 0 },
+          beginAtZero: chave.toLowerCase().includes("umidade"),
         };
         corIndex++;
         yAxisCount++;
       });
-
-      if (graficoHistorico) {
-        graficoHistorico.destroy();
-      } // Destroi de novo por segurança
 
       if (datasets.length > 0) {
         graficoHistorico = new Chart(mainCtx, {
@@ -482,7 +591,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     } catch (error) {
       console.error("Erro desenhar gráfico:", error);
-      if (graficoHistorico) graficoHistorico.destroy();
+      if (graficoHistorico) {
+        graficoHistorico.destroy();
+        graficoHistorico = null;
+      }
       mainCtx.clearRect(0, 0, mainCtx.canvas.width, mainCtx.canvas.height);
       mainCtx.textAlign = "center";
       mainCtx.fillStyle = "#dc3545";
@@ -498,66 +610,79 @@ document.addEventListener("DOMContentLoaded", () => {
   async function carregarHistoricoEventos(sistemaId) {
     if (!sistemaId || !tabelaEventosEl) return;
     tabelaEventosEl.innerHTML =
-      '<tr><td colspan="3">Carregando eventos...</td></tr>';
+      '<tr><td colspan="3" class="text-center text-muted">Carregando eventos...</td></tr>';
     try {
       const eventos = await fetchData(`/api/sistemas/${sistemaId}/eventos`);
       tabelaEventosEl.innerHTML = "";
       if (!eventos || eventos.length === 0) {
         tabelaEventosEl.innerHTML =
-          '<tr><td colspan="3">Nenhum evento registrado.</td></tr>';
+          '<tr><td colspan="3" class="text-center text-muted">Nenhum evento registrado.</td></tr>';
         return;
       }
-      eventos.slice(0, 10).forEach((evento) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${new Date(evento.timestamp).toLocaleString(
-          "pt-BR"
-        )}</td><td>${evento.acao || "N/A"}</td><td>${
-          evento.motivo || "N/A"
-        }</td>`;
-        tabelaEventosEl.appendChild(tr);
+      eventos.slice(0, 10).forEach((ev) => {
+        const dataHora = new Date(ev.timestamp).toLocaleString("pt-BR", {
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+        const acao = ev.acao?.replace(/_/g, " ") || "N/A"; // Troca _ por espaço
+        const motivo = ev.motivo || "--";
+        tabelaEventosEl.innerHTML += `<tr><td>${dataHora}</td><td class="text-capitalize">${acao.toLowerCase()}</td><td>${motivo}</td></tr>`;
       });
     } catch (error) {
       console.error("Erro carregar eventos:", error);
       tabelaEventosEl.innerHTML =
-        '<tr><td colspan="3">Erro ao carregar eventos.</td></tr>';
+        '<tr><td colspan="3" class="text-center text-danger">Erro ao carregar eventos.</td></tr>';
     }
   }
 
   // Carregar culturas para modal
   async function carregarCulturasParaModal(selectElement) {
     if (!selectElement) return;
+    const valorGuardado =
+      selectElement.dataset.loadingValue || selectElement.value;
+    selectElement.innerHTML = `<option value="">Carregando...</option>`;
+    selectElement.disabled = true;
+    selectElement.dataset.loadingValue = valorGuardado;
     try {
       const culturas = await fetchData("/api/culturas");
-      if (!culturas) return;
-      const valorSelecionado = selectElement.value;
       selectElement.innerHTML = `<option value="">-- Sem Cultura --</option>`;
-      culturas.forEach((c) => {
-        selectElement.innerHTML += `<option value="${c.id}">${c.nome}</option>`;
-      });
-      if (valorSelecionado) selectElement.value = valorSelecionado; // Restaura seleção
+      if (culturas) {
+        culturas.forEach((c) => {
+          selectElement.innerHTML += `<option value="${c.id}">${c.nome}</option>`;
+        });
+      }
+      if (culturas?.some((c) => c.id == valorGuardado)) {
+        selectElement.value = valorGuardado;
+      }
     } catch (error) {
       console.error("Erro carregar culturas modal:", error);
+      selectElement.innerHTML = `<option value="">Erro</option>`;
+    } finally {
+      selectElement.disabled = false;
+      delete selectElement.dataset.loadingValue;
     }
   }
 
   // Carregar mapeamento
   async function carregarMapeamentoDoSistema(sistemaId) {
     if (!sistemaId || !formMapeamento) return;
-    formMapeamento.reset(); // Limpa form
+    formMapeamento.reset();
     try {
       const mapeamentos = await fetchData(
         `/api/sistemas/${sistemaId}/mapeamento`
       );
+      for (let i = 1; i <= 8; i++) {
+        document.getElementById(`map_tipo_${i}`)?.setAttribute("value", "");
+        document.getElementById(`map_unidade_${i}`)?.setAttribute("value", "");
+      }
       if (mapeamentos) {
         mapeamentos.forEach((map) => {
-          const tipoInput = document.getElementById(
-            `map_tipo_${map.field_number}`
-          );
-          const unidadeInput = document.getElementById(
-            `map_unidade_${map.field_number}`
-          );
-          if (tipoInput) tipoInput.value = map.tipo_leitura || "";
-          if (unidadeInput) unidadeInput.value = map.unidade || "";
+          document
+            .getElementById(`map_tipo_${map.field_number}`)
+            ?.setAttribute("value", map.tipo_leitura || "");
+          document
+            .getElementById(`map_unidade_${map.field_number}`)
+            ?.setAttribute("value", map.unidade || "");
         });
       }
     } catch (error) {
@@ -568,7 +693,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Salvar mapeamento
   async function salvarMapeamentoDoSistema(sistemaId) {
-    if (!sistemaId || !formMapeamento) return;
+    if (!sistemaId || !formMapeamento || !modalMapeamento) return;
     const mapeamentosParaSalvar = [];
     for (let i = 1; i <= 8; i++) {
       const tipo = document.getElementById(`map_tipo_${i}`)?.value.trim();
@@ -587,13 +712,9 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       showSuccessAlert("Mapeamento salvo!");
       modalMapeamento.hide();
-      // Recarrega tudo para garantir consistência
       carregarDashboardParaSistema(sistemaId);
     } catch (error) {
-      console.error(
-        "Erro salvar mapeamento:",
-        error
-      ); /* Alerta já mostrado em putData */
+      console.error("Erro salvar mapeamento:", error);
     }
   }
 
@@ -603,13 +724,14 @@ document.addEventListener("DOMContentLoaded", () => {
       showErrorAlert("Selecione um sistema.");
       return;
     }
-    if (!modalGraficoDetalhadoEl) {
-      console.error("Modal do gráfico detalhado não encontrado no HTML.");
+    if (!modalGraficoDetalhadoEl || !modalGraficoDetalhado) {
+      console.error("Modal gráfico detalhado não encontrado.");
       return;
     }
     sensorKeyAtualGraficoDetalhado = sensorKey;
     sensorLabelAtualGraficoDetalhado = sensorLabel;
-    modalGraficoTituloEl.textContent = `Histórico: ${sensorLabel}`;
+    if (modalGraficoTituloEl)
+      modalGraficoTituloEl.textContent = `Histórico: ${sensorLabel}`;
     const defaultInterval = "7d";
     const defaultRadio = document.getElementById(`intervalo${defaultInterval}`);
     if (defaultRadio) defaultRadio.checked = true;
@@ -627,12 +749,21 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const ctxDetalhado = canvasGraficoDetalhadoEl.getContext("2d");
-    if (!ctxDetalhado) return;
+    if (!ctxDetalhado) {
+      console.error("Contexto 2D gráfico detalhado não encontrado.");
+      return;
+    }
 
-    modalGraficoTituloEl.textContent = `Carregando: ${sensorLabel} (${
-      intervalo === "1d" ? "24h" : intervalo
-    })...`;
-    if (graficoDetalhado) graficoDetalhado.destroy(); // Limpa antes de buscar
+    const intervaloLabel =
+      intervalo === "1d"
+        ? "Últimas 24h"
+        : `Últimos ${intervalo.replace("d", " dias")}`;
+    if (modalGraficoTituloEl)
+      modalGraficoTituloEl.textContent = `Carregando: ${sensorLabel} (${intervaloLabel})...`;
+    if (graficoDetalhado) {
+      graficoDetalhado.destroy();
+      graficoDetalhado = null;
+    }
     ctxDetalhado.clearRect(
       0,
       0,
@@ -641,6 +772,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     ctxDetalhado.textAlign = "center";
     ctxDetalhado.fillStyle = "#6c757d";
+    ctxDetalhado.font = "16px sans-serif";
     ctxDetalhado.fillText(
       "Carregando dados...",
       canvasGraficoDetalhadoEl.width / 2,
@@ -650,13 +782,12 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const url = `/api/sistemas/${sistemaIdAtivo}/dados-historicos?sensor=${sensorKey}&intervalo=${intervalo}`;
       const dados = await fetchData(url);
-      const intervaloLabel =
-        intervalo === "1d"
-          ? "Últimas 24h"
-          : `Últimos ${intervalo.replace("d", " dias")}`;
-      modalGraficoTituloEl.textContent = `Histórico: ${sensorLabel} (${intervaloLabel})`;
-
-      if (graficoDetalhado) graficoDetalhado.destroy(); // Limpa de novo por segurança
+      if (modalGraficoTituloEl)
+        modalGraficoTituloEl.textContent = `Histórico: ${sensorLabel} (${intervaloLabel})`;
+      if (graficoDetalhado) {
+        graficoDetalhado.destroy();
+        graficoDetalhado = null;
+      }
 
       if (!dados || dados.length === 0) {
         console.log(`Sem dados ${sensorKey} intervalo ${intervalo}.`);
@@ -682,9 +813,22 @@ document.addEventListener("DOMContentLoaded", () => {
       }));
 
       let unidade = "";
-      if (sensorKey.toLowerCase().includes("temperatura")) unidade = "°C";
-      else if (sensorKey.toLowerCase().includes("umidade")) unidade = "%";
-      else if (sensorKey.toLowerCase().includes("evapo")) unidade = "mm";
+      const cardCol = document.querySelector(
+        `.card-sensor[data-sensor="${sensorKey}"]`
+      );
+      if (cardCol && !cardCol.classList.contains("d-none")) {
+        const valorEl = cardCol.querySelector(".card-value");
+        const valorTexto = valorEl?.textContent;
+        if (valorTexto && valorTexto.includes(" ")) {
+          unidade = valorTexto.split(" ").pop();
+        }
+      }
+      if (!unidade) {
+        // Fallback
+        if (sensorKey.toLowerCase().includes("temperatura")) unidade = "°C";
+        else if (sensorKey.toLowerCase().includes("umidade")) unidade = "%";
+        else if (sensorKey.toLowerCase().includes("evapo")) unidade = "mm";
+      }
 
       const optionsDetalhado = {
         responsive: true,
@@ -706,9 +850,13 @@ document.addEventListener("DOMContentLoaded", () => {
               display: true,
               text: `${sensorLabel}${unidade ? ` (${unidade})` : ""}`,
             },
+            beginAtZero: sensorKey.toLowerCase().includes("umidade"),
           },
         },
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { bodyFont: { size: 13 }, titleFont: { size: 15 } },
+        },
       };
 
       graficoDetalhado = new Chart(ctxDetalhado, {
@@ -721,18 +869,21 @@ document.addEventListener("DOMContentLoaded", () => {
               borderColor: "#0d6efd",
               backgroundColor: "#0d6efd",
               tension: 0.1,
-              pointRadius: dataPoints.length > 200 ? 0 : 1,
+              pointRadius: dataPoints.length > 250 ? 0 : 1,
               borderWidth: 2,
               fill: false,
             },
           ],
-        }, // Oculta pontos se muitos dados
+        },
         options: optionsDetalhado,
       });
     } catch (error) {
       console.error(`Erro gráfico detalhado ${sensorKey}:`, error);
       showErrorAlert(`Erro buscar dados gráfico ${sensorLabel}.`);
-      if (graficoDetalhado) graficoDetalhado.destroy();
+      if (graficoDetalhado) {
+        graficoDetalhado.destroy();
+        graficoDetalhado = null;
+      }
       ctxDetalhado.clearRect(
         0,
         0,
@@ -756,31 +907,35 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- 6. EVENT LISTENERS ---
-  logoutButton.addEventListener("click", logout);
-  seletorSistemasEl.addEventListener("change", (event) => {
+  logoutButton?.addEventListener("click", logout);
+  seletorSistemasEl?.addEventListener("change", (event) => {
     carregarDashboardParaSistema(event.target.value);
   });
-  btnAdicionarPrimeiroSistema.addEventListener("click", () => {
-    formAdicionarSistema.reset();
-    modalSistema.show();
+  btnAdicionarPrimeiroSistema?.addEventListener("click", () => {
+    if (formAdicionarSistema) formAdicionarSistema.reset();
+    modalSistema?.show();
   });
-  btnAbrirModalSistema.addEventListener("click", () => {
-    formAdicionarSistema.reset();
-    modalSistema.show();
+  btnAbrirModalSistema?.addEventListener("click", () => {
+    if (formAdicionarSistema) formAdicionarSistema.reset();
+    modalSistema?.show();
   });
 
-  // Botões Ligar/Desligar
   document
     .getElementById("ligarBombaBtn")
     ?.addEventListener("click", async () => {
-      if (!sistemaIdAtivo) return;
+      if (!sistemaIdAtivo) {
+        showErrorAlert("Nenhum sistema selecionado.");
+        return;
+      }
       try {
         await postData(`/api/sistemas/${sistemaIdAtivo}/comando`, {
           comando: "LIGAR",
         });
-        statusBombaEl.textContent = "Ligando...";
-        cardStatusBombaEl.classList.remove("status-desligada");
-        cardStatusBombaEl.classList.add("status-ligada");
+        if (statusBombaEl) statusBombaEl.textContent = "Ligando...";
+        if (cardStatusBombaEl) {
+          cardStatusBombaEl.classList.remove("status-desligada");
+          cardStatusBombaEl.classList.add("status-ligada");
+        }
         setTimeout(() => {
           carregarDadosAtuais(sistemaIdAtivo);
           carregarHistoricoEventos(sistemaIdAtivo);
@@ -792,14 +947,19 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("desligarBombaBtn")
     ?.addEventListener("click", async () => {
-      if (!sistemaIdAtivo) return;
+      if (!sistemaIdAtivo) {
+        showErrorAlert("Nenhum sistema selecionado.");
+        return;
+      }
       try {
         await postData(`/api/sistemas/${sistemaIdAtivo}/comando`, {
           comando: "DESLIGAR",
         });
-        statusBombaEl.textContent = "Desligando...";
-        cardStatusBombaEl.classList.add("status-desligada");
-        cardStatusBombaEl.classList.remove("status-ligada");
+        if (statusBombaEl) statusBombaEl.textContent = "Desligando...";
+        if (cardStatusBombaEl) {
+          cardStatusBombaEl.classList.add("status-desligada");
+          cardStatusBombaEl.classList.remove("status-ligada");
+        }
         setTimeout(() => {
           carregarDadosAtuais(sistemaIdAtivo);
           carregarHistoricoEventos(sistemaIdAtivo);
@@ -809,14 +969,16 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-  // Botão Excluir Sistema
   btnExcluirSistema?.addEventListener("click", async () => {
-    if (!sistemaIdAtivo) return;
+    if (!sistemaIdAtivo) {
+      showErrorAlert("Nenhum sistema selecionado.");
+      return;
+    }
     const sistemaAtual = listaDeSistemas.find((s) => s.id == sistemaIdAtivo);
     if (!sistemaAtual) return;
     if (
       confirm(
-        `Excluir "${sistemaAtual.nome_sistema}"?\nTODOS os dados serão perdidos.`
+        `Tem certeza que deseja excluir o sistema "${sistemaAtual.nome_sistema}"?\nTODOS os dados (leituras, eventos, cálculos, mapeamentos) serão perdidos permanentemente.`
       )
     ) {
       try {
@@ -830,25 +992,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Botão Editar Sistema
   btnEditarSistema?.addEventListener("click", async () => {
-    if (!sistemaIdAtivo) return;
+    if (!sistemaIdAtivo || !modalEditar) {
+      showErrorAlert("Nenhum sistema selecionado.");
+      return;
+    }
     try {
+      if (selectCulturaNoModalEditar) selectCulturaNoModalEditar.value = "";
+      if (dataPlantioNoModalEditar) dataPlantioNoModalEditar.value = "";
+      await carregarCulturasParaModal(selectCulturaNoModalEditar);
       const sistema = await fetchData(`/api/sistemas/${sistemaIdAtivo}`);
-      if (!sistema) return;
+      if (!sistema) {
+        showErrorAlert("Não foi possível carregar dados do sistema.");
+        return;
+      }
       document.getElementById("edit_sistema_id").value = sistema.id;
       document.getElementById("edit_nome_sistema").value = sistema.nome_sistema;
       document.getElementById("edit_channel_id").value =
         sistema.thingspeak_channel_id;
       document.getElementById("edit_read_api_key").value =
         sistema.thingspeak_read_apikey;
-      await carregarCulturasParaModal(selectCulturaNoModalEditar);
-      selectCulturaNoModalEditar.value = sistema.cultura_id_atual || "";
-      dataPlantioNoModalEditar.value = sistema.data_plantio
-        ? sistema.data_plantio.split("T")[0]
-        : "";
-      // Adicionar preenchimento da latitude se o campo existir no modal
-      // document.getElementById("edit_latitude").value = sistema.latitude || '';
+      if (selectCulturaNoModalEditar)
+        selectCulturaNoModalEditar.value = sistema.cultura_id_atual || "";
+      if (dataPlantioNoModalEditar)
+        dataPlantioNoModalEditar.value = sistema.data_plantio
+          ? sistema.data_plantio.split("T")[0]
+          : "";
       modalEditar.show();
     } catch (error) {
       console.error("Erro carregar para edição:", error);
@@ -856,60 +1025,71 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Form Adicionar Sistema
   formAdicionarSistema?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const body = {
-      nome_sistema: document.getElementById("nome_sistema").value,
-      thingspeak_channel_id: document.getElementById("channel_id").value,
-      thingspeak_read_apikey: document.getElementById("read_api_key").value,
+      nome_sistema: document.getElementById("nome_sistema")?.value,
+      thingspeak_channel_id: document.getElementById("channel_id")?.value,
+      thingspeak_read_apikey: document.getElementById("read_api_key")?.value,
     };
+    if (
+      !body.nome_sistema ||
+      !body.thingspeak_channel_id ||
+      !body.thingspeak_read_apikey
+    ) {
+      showErrorAlert("Preencha todos os campos obrigatórios.");
+      return;
+    }
     try {
       await postData("/api/sistemas", body);
       showSuccessAlert("Sistema cadastrado!");
       formAdicionarSistema.reset();
-      modalSistema.hide();
+      modalSistema?.hide();
       inicializarDashboard();
     } catch (error) {
       console.error("Erro cadastrar sistema:", error);
     }
   });
 
-  // Form Editar Sistema
   formEditarSistema?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const id = document.getElementById("edit_sistema_id").value;
+    const id = document.getElementById("edit_sistema_id")?.value;
+    if (!id) return;
     const body = {
-      nome_sistema: document.getElementById("edit_nome_sistema").value,
-      thingspeak_channel_id: document.getElementById("edit_channel_id").value,
+      nome_sistema: document.getElementById("edit_nome_sistema")?.value,
+      thingspeak_channel_id: document.getElementById("edit_channel_id")?.value,
       thingspeak_read_apikey:
-        document.getElementById("edit_read_api_key").value,
-      cultura_id_atual: selectCulturaNoModalEditar.value || null,
-      data_plantio: dataPlantioNoModalEditar.value || null,
-      // Adicionar leitura da latitude se o campo existir no modal
-      // latitude: document.getElementById("edit_latitude")?.value || null
+        document.getElementById("edit_read_api_key")?.value,
+      cultura_id_atual: selectCulturaNoModalEditar?.value || null,
+      data_plantio: dataPlantioNoModalEditar?.value || null,
     };
+    if (
+      !body.nome_sistema ||
+      !body.thingspeak_channel_id ||
+      !body.thingspeak_read_apikey
+    ) {
+      showErrorAlert("Preencha Nome, ID Canal e Chave API.");
+      return;
+    }
     try {
       await putData(`/api/sistemas/${id}`, body);
       showSuccessAlert("Sistema atualizado!");
-      modalEditar.hide();
+      modalEditar?.hide();
       inicializarDashboard();
     } catch (error) {
       console.error("Erro atualizar sistema:", error);
     }
   });
 
-  // Botão Abrir Mapeamento
   btnAbrirModalMapeamento?.addEventListener("click", () => {
     if (sistemaIdAtivo) {
       carregarMapeamentoDoSistema(sistemaIdAtivo);
-      modalMapeamento.show();
+      modalMapeamento?.show();
     } else {
-      showErrorAlert("Selecione um sistema.");
+      showErrorAlert("Selecione um sistema primeiro.");
     }
   });
 
-  // Form Salvar Mapeamento
   formMapeamento?.addEventListener("submit", (event) => {
     event.preventDefault();
     if (sistemaIdAtivo) {
@@ -917,29 +1097,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Listeners dos Cards Sensores
-  document.querySelectorAll(".card-sensor").forEach((card) => {
-    const colunaCard = card.closest(".col-lg.col-md-6") || card; // Pega a coluna
-    if (!colunaCard.classList.contains("d-none")) {
-      // Aplica apenas se visível inicialmente
-      colunaCard.style.cursor = "pointer"; // Adiciona cursor
-      colunaCard.addEventListener("click", () => {
-        // Pega dados do elemento com .card-sensor (pode ser a própria coluna ou filho)
-        const cardSensorElement =
-          colunaCard.querySelector(".card-sensor") || colunaCard;
-        const sensorKey = cardSensorElement.dataset.sensor;
-        const sensorLabel = cardSensorElement.dataset.label;
-        // Abre modal apenas se o card estiver visível no momento do clique
-        if (
-          sensorKey &&
-          sensorLabel &&
-          !colunaCard.classList.contains("d-none")
-        ) {
-          abrirModalGraficoDetalhado(sensorKey, sensorLabel);
-        } else {
-          console.warn("Card clicado sem dados ou oculto:", colunaCard);
-        }
-      });
+  // *** CORREÇÃO: Usa Delegação de Eventos para cliques nos cards ***
+  dashboardContentEl?.addEventListener("click", (event) => {
+    // Encontra o elemento '.card-sensor' mais próximo que foi clicado
+    const colunaCard = event.target.closest(".card-sensor");
+    // Verifica se encontrou o card, se ele tem os dados e se NÃO está oculto
+    if (colunaCard && !colunaCard.classList.contains("d-none")) {
+      const sensorKey = colunaCard.dataset.sensor;
+      const sensorLabel = colunaCard.dataset.label;
+      if (sensorKey && sensorLabel) {
+        abrirModalGraficoDetalhado(sensorKey, sensorLabel);
+      } else {
+        console.warn(
+          "Card clicado (delegado) sem data-sensor/label:",
+          colunaCard
+        );
+      }
     }
   });
 
@@ -959,10 +1132,31 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- 7. INICIALIZAÇÃO E ATUALIZAÇÃO AUTOMÁTICA ---
-  inicializarDashboard();
-  setInterval(() => {
+  inicializarDashboard(); // Inicia o carregamento do dashboard
+
+  let updateInterval = setInterval(() => {
     if (sistemaIdAtivo) {
       carregarDadosAtuais(sistemaIdAtivo);
+      carregarHistoricoEventos(sistemaIdAtivo); // Atualiza o log de eventos também
     }
   }, 30000); // Atualiza a cada 30 segundos
+
+  // Opcional: Pausar atualização quando a janela não estiver visível
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearInterval(updateInterval);
+    } else {
+      if (sistemaIdAtivo) {
+        carregarDadosAtuais(sistemaIdAtivo);
+        carregarHistoricoEventos(sistemaIdAtivo);
+      }
+      clearInterval(updateInterval); // Limpa o antigo
+      updateInterval = setInterval(() => {
+        if (sistemaIdAtivo) {
+          carregarDadosAtuais(sistemaIdAtivo);
+          carregarHistoricoEventos(sistemaIdAtivo);
+        }
+      }, 30000);
+    }
+  });
 });
