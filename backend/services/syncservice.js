@@ -2,7 +2,7 @@ const axios = require("axios");
 const cron = require("node-cron");
 const pool = require("../config/db");
 
-// --- Constantes e Funções Auxiliares de ET ---
+// --- Constantes e Funções Auxiliares de ET (DO SEU CÓDIGO ORIGINAL) ---
 
 // !!! IMPORTANTE: AJUSTE A LATITUDE PARA A SUA LOCALIDADE !!!
 const LATITUDE_PADRAO_GRAUS = -23.55; // <-- AJUSTE AQUI
@@ -184,18 +184,47 @@ async function obterKcCultura(culturaId, diasDesdePlantio, connection) {
   }
 }
 
-// --- FUNÇÃO PRINCIPAL DE SINCRONIZAÇÃO E CÁLCULOS / AUTOMAÇÃO ETc ---
+// --- NOVA FUNÇÃO AUXILIAR PARA ENVIAR O COMANDO ---
+async function enviarComandoThingSpeak(sistema, comando) {
+  const writeKey = sistema.thingspeak_write_apikey;
+  const commandField = 8; // Assumindo Field 8 para o comando
+
+  if (!writeKey) {
+    console.log(
+      `  -> ERRO: Chave de ESCRITA do ThingSpeak não configurada para o sistema ID: ${sistema.id}`
+    );
+    return;
+  }
+
+  const url = `https://api.thingspeak.com/update?api_key=${writeKey}&field${commandField}=${comando}`;
+
+  try {
+    await axios.get(url);
+    console.log(
+      `  -> Comando ${comando} (1=Ligar, 0=Desligar) enviado para o ThingSpeak (Sistema ID: ${sistema.id})`
+    );
+  } catch (error) {
+    console.error(
+      `  -> ERRO ao enviar comando ${comando} para o ThingSpeak:`,
+      error.message
+    );
+  }
+}
+
+// --- FUNÇÃO PRINCIPAL (MODIFICADA) ---
 async function syncAndAutomate() {
   console.log(`[${new Date().toLocaleString("pt-BR")}] Iniciando tarefa...`);
   let connection;
   try {
     connection = await pool.getConnection();
+    // Query modificada para pegar SÓ sistemas com
+    // as chaves de leitura E escrita
     const [sistemas] = await connection.query(
-      "SELECT id, nome_sistema, thingspeak_channel_id, thingspeak_read_apikey, cultura_id_atual, data_plantio, last_etc_irrigation_timestamp, comando_irrigacao FROM Sistemas_Irrigacao"
+      "SELECT * FROM Sistemas_Irrigacao WHERE thingspeak_channel_id IS NOT NULL AND thingspeak_read_apikey IS NOT NULL AND thingspeak_write_apikey IS NOT NULL"
     );
 
     if (sistemas.length === 0) {
-      console.log("Nenhum sistema cadastrado.");
+      console.log("Nenhum sistema completo (com chaves R/W) encontrado.");
       return;
     }
 
@@ -205,7 +234,7 @@ async function syncAndAutomate() {
       );
       let etcCalculadoHoje = null; // Guarda o valor de ETc calculado nesta execução
 
-      // --- 1. Sincronização com ThingSpeak ---
+      // --- 1. Sincronização com ThingSpeak (CÓDIGO ORIGINAL) ---
       if (sistema.thingspeak_channel_id && sistema.thingspeak_read_apikey) {
         try {
           const url = `https://api.thingspeak.com/channels/${sistema.thingspeak_channel_id}/feeds.json?api_key=${sistema.thingspeak_read_apikey}&results=100`;
@@ -287,7 +316,7 @@ async function syncAndAutomate() {
         console.log("  -> Sem config. ThingSpeak.");
       }
 
-      // --- 2. Cálculo de ET₀ e ETc (Apenas Camargo) ---
+      // --- 2. Cálculo de ET₀ e ETc (CÓDIGO ORIGINAL) ---
       const hoje = new Date();
       const diaJuliano = calcularDiaJuliano(hoje);
       const latitude = LATITUDE_PADRAO_GRAUS; // !!! AJUSTE !!!
@@ -392,7 +421,7 @@ async function syncAndAutomate() {
         );
       }
 
-      // --- 3. Automação da Irrigação Baseada em ETc Acumulado ---
+      // --- 3. Automação da Irrigação (LÓGICA MODIFICADA) ---
       if (
         etcCalculadoHoje !== null &&
         etcCalculadoHoje >= 0 &&
@@ -409,12 +438,13 @@ async function syncAndAutomate() {
             : inicioAcumulacao.toLocaleString("pt-BR");
         console.log(`   - Período de acumulação desde: ${ultimaIrrigacaoStr}`);
 
-        // Busca ETc DESDE a última irrigação por ETc
+        // Busca ETc DESDE a última irrigação por ETc (LÓGICA DO CÓDIGO ORIGINAL)
         const [etcRecords] = await connection.query(
           `SELECT valor_etc_calculado FROM Calculos_ETc WHERE sistema_id = ? AND timestamp_calculo > ? ORDER BY timestamp_calculo ASC`,
           [sistema.id, inicioAcumulacao]
         );
 
+        // CALCULA O ETc ACUMULADO (LÓGICA DO CÓDIGO ORIGINAL)
         const accumulatedEtc = etcRecords.reduce(
           (sum, record) => sum + parseFloat(record.valor_etc_calculado),
           0
@@ -425,47 +455,37 @@ async function syncAndAutomate() {
           )} mm (Limite: ${IRRIGATION_THRESHOLD_MM} mm)`
         );
 
-        // Verifica se atingiu o limite E se a bomba não está já LIGADA
-        if (
-          accumulatedEtc >= IRRIGATION_THRESHOLD_MM &&
-          sistema.comando_irrigacao !== "LIGAR"
-        ) {
-          console.log("   - Limite ETc atingido! Acionando irrigação.");
-          try {
-            await connection.beginTransaction();
-            await connection.query(
-              "UPDATE Sistemas_Irrigacao SET comando_irrigacao = 'LIGAR', last_etc_irrigation_timestamp = NOW() WHERE id = ?",
-              [sistema.id]
-            );
-            await connection.query(
-              "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, timestamp) VALUES (?, ?, ?, NOW())",
-              [
-                sistema.id,
-                "LIGOU_AUTO_ETC",
-                `ETc (${accumulatedEtc.toFixed(
-                  2
-                )}mm) >= Limite (${IRRIGATION_THRESHOLD_MM}mm)`,
-              ]
-            );
-            await connection.commit();
-            console.log(
-              "   -> Comando LIGAR (ETc) enviado e timestamp atualizado."
-            );
-          } catch (error) {
-            await connection.rollback();
-            console.error("   -> Erro ao ligar irrigação por ETc:", error);
-          }
-        } else if (accumulatedEtc < IRRIGATION_THRESHOLD_MM) {
-          console.log("   - Limite ETc não atingido.");
-        } else if (sistema.comando_irrigacao === "LIGAR") {
-          console.log("   - Limite ETc atingido, mas bomba já LIGADA.");
+        // LÓGICA DE ENVIO (DA SUA NOVA LÓGICA)
+        if (accumulatedEtc >= IRRIGATION_THRESHOLD_MM) {
+          console.log("   - Limite ETc atingido! Enviando comando LIGAR.");
+          await enviarComandoThingSpeak(sistema, 1); // Envia 1 para LIGAR
+
+          // Atualiza o timestamp da última irrigação no NOSSO banco
+          await connection.query(
+            "UPDATE Sistemas_Irrigacao SET last_etc_irrigation_timestamp = NOW() WHERE id = ?",
+            [sistema.id]
+          );
+          // Salva o evento no NOSSO banco
+          await connection.query(
+            "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, timestamp) VALUES (?, ?, ?, NOW())",
+            [
+              sistema.id,
+              "LIGOU_AUTO_ETC",
+              `ETc Acumulado (${accumulatedEtc.toFixed(2)}mm)`,
+            ]
+          );
+        } else {
+          console.log(
+            "   - Limite ETc não atingido. Enviando comando DESLIGAR."
+          );
+          await enviarComandoThingSpeak(sistema, 0); // Envia 0 para DESLIGAR
         }
       } else {
         console.log(
           "  -> Irrigação por ETc pulada (sem ETc válido, cultura ou data)."
         );
+        await enviarComandoThingSpeak(sistema, 0); // Garante que fica desligado
       }
-      // --- Fim da Automação ETc ---
 
       console.log(
         `--- Fim do processamento para: "${sistema.nome_sistema}" ---`
@@ -479,14 +499,13 @@ async function syncAndAutomate() {
   }
 }
 
-// --- FUNÇÃO PARA INICIAR O AGENDADOR ---
+// --- FUNÇÃO PARA INICIAR O AGENDADOR (DA SUA NOVA LÓGICA) ---
 function startSyncSchedule() {
-  cron.schedule("*/5 * * * *", syncAndAutomate); // A cada 5 minutos (para teste)
-  cron.schedule("0 6 * * *", syncAndAutomate); // Todo dia às 6 da manhã <-- AJUSTE AQUI SE NECESSÁRIO
+  cron.schedule("*/5 * * * *", syncAndAutomate); // A cada 5 minutos
   console.log(
-    "Agendador de sincronização, cálculos (ET0 Camargo/ETc) e Automação ETc iniciado (diariamente às 06:00)."
+    "Agendador de sincronização e automação (ThingSpeak) iniciado (a cada 5 min)."
   );
-  syncAndAutomate(); // Descomente para executar uma vez ao iniciar (teste)
+  syncAndAutomate(); // Executa uma vez ao iniciar
 }
 
 module.exports = { startSyncSchedule };

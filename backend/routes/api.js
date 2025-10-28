@@ -119,13 +119,20 @@ router.post("/sistemas", async (req, res) => {
       nome_sistema,
       thingspeak_channel_id,
       thingspeak_read_apikey,
+      thingspeak_write_apikey, // <-- ADICIONADO
       cultura_id_atual, // Pode ser null ou undefined
     } = req.body;
     const usuario_id = req.usuario.id;
 
-    if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey) {
+    if (
+      !nome_sistema ||
+      !thingspeak_channel_id ||
+      !thingspeak_read_apikey ||
+      !thingspeak_write_apikey // <-- ADICIONADO
+    ) {
       return res.status(400).json({
-        message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
+        message:
+          "Nome do sistema e todas as credenciais ThingSpeak (Read e Write) são obrigatórios.",
       });
     }
 
@@ -141,12 +148,13 @@ router.post("/sistemas", async (req, res) => {
     }
 
     const [result] = await pool.query(
-      "INSERT INTO Sistemas_Irrigacao (usuario_id, nome_sistema, thingspeak_channel_id, thingspeak_read_apikey, cultura_id_atual) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO Sistemas_Irrigacao (usuario_id, nome_sistema, thingspeak_channel_id, thingspeak_read_apikey, thingspeak_write_apikey, cultura_id_atual) VALUES (?, ?, ?, ?, ?, ?)",
       [
         usuario_id,
         nome_sistema,
         thingspeak_channel_id,
         thingspeak_read_apikey,
+        thingspeak_write_apikey, // <-- ADICIONADO
         cultura_id_atual || null, // Garante que seja NULL se não for fornecido
       ]
     );
@@ -199,14 +207,21 @@ router.put("/sistemas/:id", async (req, res) => {
       nome_sistema,
       thingspeak_channel_id,
       thingspeak_read_apikey,
+      thingspeak_write_apikey, // <-- ADICIONADO
       cultura_id_atual,
       data_plantio,
     } = req.body; // Adicionado cultura_id_atual e data_plantio
     const usuario_id = req.usuario.id;
 
-    if (!nome_sistema || !thingspeak_channel_id || !thingspeak_read_apikey) {
+    if (
+      !nome_sistema ||
+      !thingspeak_channel_id ||
+      !thingspeak_read_apikey ||
+      !thingspeak_write_apikey // <-- ADICIONADO
+    ) {
       return res.status(400).json({
-        message: "Nome do sistema e credenciais ThingSpeak são obrigatórios.",
+        message:
+          "Nome do sistema e todas as credenciais ThingSpeak (Read e Write) são obrigatórios.",
       });
     }
 
@@ -223,11 +238,12 @@ router.put("/sistemas/:id", async (req, res) => {
     }
 
     const [result] = await pool.query(
-      "UPDATE Sistemas_Irrigacao SET nome_sistema = ?, thingspeak_channel_id = ?, thingspeak_read_apikey = ?, cultura_id_atual = ?, data_plantio = ? WHERE id = ? AND usuario_id = ?",
+      "UPDATE Sistemas_Irrigacao SET nome_sistema = ?, thingspeak_channel_id = ?, thingspeak_read_apikey = ?, thingspeak_write_apikey = ?, cultura_id_atual = ?, data_plantio = ? WHERE id = ? AND usuario_id = ?",
       [
         nome_sistema,
         thingspeak_channel_id,
         thingspeak_read_apikey,
+        thingspeak_write_apikey, // <-- ADICIONADO
         cultura_id_atual || null, // Garante NULL se não fornecido
         data_plantio || null, // Garante NULL se não fornecido
         id,
@@ -296,6 +312,8 @@ router.get("/culturas", async (req, res) => {
 });
 
 // -- Comando Irrigação (ESP32) --
+// ESTA ROTA NÃO É MAIS USADA PELO NOVO CÓDIGO DO ESP32,
+// MAS É MANTIDA PARA O CONTROLE MANUAL DO DASHBOARD
 router.get("/comando/:sistemaId", async (req, res) => {
   try {
     const { sistemaId } = req.params;
@@ -324,6 +342,9 @@ router.get("/comando/:sistemaId", async (req, res) => {
 });
 
 // -- Comando Irrigação (Dashboard) --
+// ESTA ROTA ATUALIZA O BANCO LOCAL, O QUE PODE SER SOBRESCRITO
+// PELO NOVO syncservice.js.
+// O ideal seria esta rota também enviar um comando para o ThingSpeak.
 router.post("/sistemas/:sistemaId/comando", async (req, res) => {
   try {
     const { sistemaId } = req.params;

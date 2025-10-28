@@ -1016,6 +1016,9 @@ document.addEventListener("DOMContentLoaded", () => {
         sistema.thingspeak_channel_id;
       document.getElementById("edit_read_api_key").value =
         sistema.thingspeak_read_apikey;
+      // LINHA ADICIONADA (Ação 3)
+      document.getElementById("edit_write_api_key").value =
+        sistema.thingspeak_write_apikey;
       if (selectCulturaNoModalEditar)
         selectCulturaNoModalEditar.value = sistema.cultura_id_atual || "";
       if (dataPlantioNoModalEditar)
@@ -1031,15 +1034,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   formAdicionarSistema?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    // BODY ATUALIZADO (Ação 3)
     const body = {
       nome_sistema: document.getElementById("nome_sistema")?.value,
       thingspeak_channel_id: document.getElementById("channel_id")?.value,
       thingspeak_read_apikey: document.getElementById("read_api_key")?.value,
+      thingspeak_write_apikey: document.getElementById("write_api_key")?.value, // <-- ADICIONADO
     };
     if (
       !body.nome_sistema ||
       !body.thingspeak_channel_id ||
-      !body.thingspeak_read_apikey
+      !body.thingspeak_read_apikey ||
+      !body.thingspeak_write_apikey // <-- ADICIONADO
     ) {
       showErrorAlert("Preencha todos os campos obrigatórios.");
       return;
@@ -1059,20 +1065,26 @@ document.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     const id = document.getElementById("edit_sistema_id")?.value;
     if (!id) return;
+    // BODY ATUALIZADO (Ação 3)
     const body = {
       nome_sistema: document.getElementById("edit_nome_sistema")?.value,
       thingspeak_channel_id: document.getElementById("edit_channel_id")?.value,
       thingspeak_read_apikey:
         document.getElementById("edit_read_api_key")?.value,
+      thingspeak_write_apikey:
+        document.getElementById("edit_write_api_key")?.value, // <-- ADICIONADO
       cultura_id_atual: selectCulturaNoModalEditar?.value || null,
       data_plantio: dataPlantioNoModalEditar?.value || null,
     };
     if (
       !body.nome_sistema ||
       !body.thingspeak_channel_id ||
-      !body.thingspeak_read_apikey
+      !body.thingspeak_read_apikey ||
+      !body.thingspeak_write_apikey // <-- ADICIONADO
     ) {
-      showErrorAlert("Preencha Nome, ID Canal e Chave API.");
+      showErrorAlert(
+        "Preencha Nome, ID Canal e Chaves API (Leitura e Escrita)."
+      );
       return;
     }
     try {
