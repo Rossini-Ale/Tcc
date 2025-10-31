@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../config/db"); // Certifique-se que o caminho está correto
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const axios = require("axios"); // <-- ADICIONADO
 
 function toCamelCase(str) {
   if (!str) return "";
@@ -11,6 +12,35 @@ function toCamelCase(str) {
       return index === 0 ? word.toLowerCase() : word.toUpperCase();
     })
     .replace(/\s+/g, "");
+}
+
+// --- FUNÇÃO AUXILIAR (COPIADA DO SYNCSERVICE) ---
+async function enviarComandoThingSpeak(sistema, comando) {
+  const writeKey = sistema.thingspeak_write_apikey;
+  const commandField = 8; // Assumindo Field 8 para o comando
+
+  if (!writeKey) {
+    console.log(
+      `  -> ERRO: Chave de ESCRITA do ThingSpeak não configurada para o sistema ID: ${sistema.id}`
+    );
+    // Retorna um erro para a rota saber que falhou
+    throw new Error("Chave de escrita ThingSpeak não configurada.");
+  }
+
+  const url = `https://api.thingspeak.com/update?api_key=${writeKey}&field${commandField}=${comando}`;
+
+  try {
+    await axios.get(url);
+    console.log(
+      `  -> Comando MANUAL ${comando} (1=Ligar, 0=Desligar) enviado para o ThingSpeak (Sistema ID: ${sistema.id})`
+    );
+  } catch (error) {
+    console.error(
+      `  -> ERRO ao enviar comando MANUAL ${comando} para o ThingSpeak:`,
+      error.message
+    );
+    throw new Error("Erro ao enviar comando para ThingSpeak.");
+  }
 }
 
 // --- ROTAS PÚBLICAS ---
@@ -312,26 +342,16 @@ router.get("/culturas", async (req, res) => {
 });
 
 // -- Comando Irrigação (ESP32) --
-// ESTA ROTA NÃO É MAIS USADA PELO NOVO CÓDIGO DO ESP32,
-// MAS É MANTIDA PARA O CONTROLE MANUAL DO DASHBOARD
+// ESTA ROTA NÃO É MAIS USADA PELO ESP32
 router.get("/comando/:sistemaId", async (req, res) => {
   try {
     const { sistemaId } = req.params;
-    // NÃO AUTENTICADA: O ESP32 pode não ter como enviar token facilmente.
-    // Considere adicionar alguma forma de autenticação aqui se necessário (API Key?)
     const [[sistema]] = await pool.query(
       "SELECT comando_irrigacao FROM Sistemas_Irrigacao WHERE id = ?",
       [sistemaId]
     );
     if (sistema) {
       res.json({ comando: sistema.comando_irrigacao });
-      // Reseta o comando para DESLIGAR após o ESP32 ler, SE o comando for LIGAR
-      if (sistema.comando_irrigacao === "LIGAR") {
-        await pool.query(
-          "UPDATE Sistemas_Irrigacao SET comando_irrigacao = 'DESLIGAR' WHERE id = ?",
-          [sistemaId]
-        );
-      }
     } else {
       res.status(404).json({ message: "Sistema não encontrado." });
     }
@@ -342,42 +362,57 @@ router.get("/comando/:sistemaId", async (req, res) => {
 });
 
 // -- Comando Irrigação (Dashboard) --
-// ESTA ROTA ATUALIZA O BANCO LOCAL, O QUE PODE SER SOBRESCRITO
-// PELO NOVO syncservice.js.
-// O ideal seria esta rota também enviar um comando para o ThingSpeak.
+// ===== ROTA MODIFICADA =====
 router.post("/sistemas/:sistemaId/comando", async (req, res) => {
   try {
     const { sistemaId } = req.params;
-    const { comando } = req.body; // Espera 'LIGAR' ou 'DESLIGAR'
+    const { comando } = req.body; // Espera 1 (LIGAR) ou 0 (DESLIGAR)
     const usuario_id = req.usuario.id; // Autenticado
 
-    if (comando !== "LIGAR" && comando !== "DESLIGAR") {
-      return res
-        .status(400)
-        .json({ message: "Comando inválido. Use 'LIGAR' ou 'DESLIGAR'." });
+    let comandoNumerico;
+    let comandoString;
+    let motivoLog;
+
+    if (comando === 1 || comando === "1") {
+      comandoNumerico = 1;
+      comandoString = "LIGAR";
+      motivoLog = "Acionamento manual via dashboard";
+    } else {
+      comandoNumerico = 0;
+      comandoString = "DESLIGAR";
+      motivoLog = "Desligamento manual via dashboard";
     }
 
-    // Verificar se o sistema pertence ao usuário
-    const [resultUpdate] = await pool.query(
-      "UPDATE Sistemas_Irrigacao SET comando_irrigacao = ? WHERE id = ? AND usuario_id = ?",
-      [comando, sistemaId, usuario_id]
+    // 1. Buscar o sistema e sua chave de escrita
+    const [[sistema]] = await pool.query(
+      "SELECT * FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
+      [sistemaId, usuario_id]
     );
 
-    if (resultUpdate.affectedRows === 0) {
+    if (!sistema) {
       return res.status(404).json({
         message: "Sistema não encontrado ou não pertence a este usuário.",
       });
     }
 
-    // Registrar o evento de irrigação manual
+    // 2. Enviar o comando para o ThingSpeak
+    await enviarComandoThingSpeak(sistema, comandoNumerico);
+
+    // 3. Atualizar o status no NOSSO banco de dados (para o dashboard refletir)
     await pool.query(
-      "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, `timestamp`) VALUES (?, ?, ?, NOW())", // Usando timestamp do DB
-      [sistemaId, `${comando}_MANUAL`, "Acionamento via dashboard"]
+      "UPDATE Sistemas_Irrigacao SET comando_irrigacao = ? WHERE id = ?",
+      [comandoString, sistemaId]
+    );
+
+    // 4. Registrar o evento de irrigação manual
+    await pool.query(
+      "INSERT INTO Eventos_Irrigacao (sistema_id, acao, motivo, `timestamp`) VALUES (?, ?, ?, NOW())",
+      [sistemaId, `${comandoString}_MANUAL`, motivoLog]
     );
 
     res
       .status(200)
-      .json({ message: `Comando ${comando} enviado com sucesso.` });
+      .json({ message: `Comando ${comandoString} enviado com sucesso.` });
   } catch (error) {
     console.error("Erro ao enviar comando manual:", error);
     res.status(500).json({ message: "Erro ao enviar comando manual." });

@@ -55,11 +55,25 @@ body {
 .btn:hover {
   transform: scale(1.03);
 }
-.status-ligada {
-  background-color: var(--cor-sucesso) !important;
-  color: white;
+/* ================================== */
+/* NOVOS ESTILOS P/ CARD CONTROLO BOMBA */
+/* ================================== */
+
+/* Define a cor do ícone quando LIGADA */
+#cardStatusBomba.status-ligada #statusBomba {
+  color: var(--cor-sucesso);
 }
-.status-desligada {
-  background-color: var(--cor-perigo) !important;
-  color: white;
+
+/* Define a cor do ícone quando DESLIGADA */
+#cardStatusBomba.status-desligada #statusBomba {
+  color: var(--cor-perigo);
+}
+
+/* Estilo para os botões desativados.
+  Usamos a classe .disabled que o Bootstrap já entende.
+*/
+#cardStatusBomba #ligarBombaBtn.disabled,
+#cardStatusBomba #desligarBombaBtn.disabled {
+  opacity: 0.5;
+  pointer-events: none; /* Impede o clique */
 }

@@ -411,14 +411,34 @@ document.addEventListener("DOMContentLoaded", () => {
       // Status da Bomba
       colStatusBomba?.classList.remove("d-none");
       cardStatusBombaEl?.classList.remove("status-ligada", "status-desligada");
+
+      // Seleciona os botões
+      const ligarBtn = document.getElementById("ligarBombaBtn");
+      const desligarBtn = document.getElementById("desligarBombaBtn");
+
       if (dados.statusBomba === "LIGAR") {
-        if (statusBombaEl) statusBombaEl.textContent = "Ligada";
+        if (statusBombaEl)
+          statusBombaEl.innerHTML = '<i class="bi bi-toggle-on"></i>';
         cardStatusBombaEl?.classList.add("status-ligada");
+
+        // Desativa o botão LIGAR, ativa o DESLIGAR
+        if (ligarBtn) ligarBtn.classList.add("disabled");
+        if (desligarBtn) desligarBtn.classList.remove("disabled");
       } else if (dados.statusBomba === "DESLIGAR") {
-        if (statusBombaEl) statusBombaEl.textContent = "Desligada";
+        if (statusBombaEl)
+          statusBombaEl.innerHTML = '<i class="bi bi-toggle-off"></i>';
         cardStatusBombaEl?.classList.add("status-desligada");
+
+        // Ativa o botão LIGAR, desativa o DESLIGAR
+        if (ligarBtn) ligarBtn.classList.remove("disabled");
+        if (desligarBtn) desligarBtn.classList.add("disabled");
       } else {
-        if (statusBombaEl) statusBombaEl.textContent = "--";
+        if (statusBombaEl)
+          statusBombaEl.innerHTML = '<i class="bi bi-question-circle"></i>';
+
+        // Deixa ambos ativos se o estado for incerto
+        if (ligarBtn) ligarBtn.classList.remove("disabled");
+        if (desligarBtn) desligarBtn.classList.remove("disabled");
       }
 
       // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
@@ -924,6 +944,7 @@ document.addEventListener("DOMContentLoaded", () => {
     modalSistema?.show();
   });
 
+  // ===== LISTENERS DOS BOTÕES MODIFICADOS =====
   document
     .getElementById("ligarBombaBtn")
     ?.addEventListener("click", async () => {
@@ -932,8 +953,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       try {
+        // Envia o comando 1 (Ligar) para a nova rota
         await postData(`/api/sistemas/${sistemaIdAtivo}/comando`, {
-          comando: "LIGAR",
+          comando: 1,
         });
         if (statusBombaEl) statusBombaEl.textContent = "Ligando...";
         if (cardStatusBombaEl) {
@@ -956,8 +978,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       try {
+        // Envia o comando 0 (Desligar) para a nova rota
         await postData(`/api/sistemas/${sistemaIdAtivo}/comando`, {
-          comando: "DESLIGAR",
+          comando: 0,
         });
         if (statusBombaEl) statusBombaEl.textContent = "Desligando...";
         if (cardStatusBombaEl) {
@@ -972,6 +995,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.error("Erro desligar bomba:", error);
       }
     });
+  // ============================================
 
   btnExcluirSistema?.addEventListener("click", async () => {
     if (!sistemaIdAtivo) {
@@ -1016,7 +1040,6 @@ document.addEventListener("DOMContentLoaded", () => {
         sistema.thingspeak_channel_id;
       document.getElementById("edit_read_api_key").value =
         sistema.thingspeak_read_apikey;
-      // LINHA ADICIONADA (Ação 3)
       document.getElementById("edit_write_api_key").value =
         sistema.thingspeak_write_apikey;
       if (selectCulturaNoModalEditar)
@@ -1034,18 +1057,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   formAdicionarSistema?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    // BODY ATUALIZADO (Ação 3)
     const body = {
       nome_sistema: document.getElementById("nome_sistema")?.value,
       thingspeak_channel_id: document.getElementById("channel_id")?.value,
       thingspeak_read_apikey: document.getElementById("read_api_key")?.value,
-      thingspeak_write_apikey: document.getElementById("write_api_key")?.value, // <-- ADICIONADO
+      thingspeak_write_apikey: document.getElementById("write_api_key")?.value,
     };
     if (
       !body.nome_sistema ||
       !body.thingspeak_channel_id ||
       !body.thingspeak_read_apikey ||
-      !body.thingspeak_write_apikey // <-- ADICIONADO
+      !body.thingspeak_write_apikey
     ) {
       showErrorAlert("Preencha todos os campos obrigatórios.");
       return;
@@ -1065,14 +1087,13 @@ document.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     const id = document.getElementById("edit_sistema_id")?.value;
     if (!id) return;
-    // BODY ATUALIZADO (Ação 3)
     const body = {
       nome_sistema: document.getElementById("edit_nome_sistema")?.value,
       thingspeak_channel_id: document.getElementById("edit_channel_id")?.value,
       thingspeak_read_apikey:
         document.getElementById("edit_read_api_key")?.value,
       thingspeak_write_apikey:
-        document.getElementById("edit_write_api_key")?.value, // <-- ADICIONADO
+        document.getElementById("edit_write_api_key")?.value,
       cultura_id_atual: selectCulturaNoModalEditar?.value || null,
       data_plantio: dataPlantioNoModalEditar?.value || null,
     };
@@ -1080,7 +1101,7 @@ document.addEventListener("DOMContentLoaded", () => {
       !body.nome_sistema ||
       !body.thingspeak_channel_id ||
       !body.thingspeak_read_apikey ||
-      !body.thingspeak_write_apikey // <-- ADICIONADO
+      !body.thingspeak_write_apikey
     ) {
       showErrorAlert(
         "Preencha Nome, ID Canal e Chaves API (Leitura e Escrita)."

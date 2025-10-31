@@ -31,22 +31,7 @@
         background-color: rgba(var(--bs-success-rgb), 0.85);
         border-color: rgba(var(--bs-success-rgb), 0.9);
       }
-      .status-ligada {
-        background-color: #d1e7dd;
-        border-color: #a3cfbb;
-        color: #0a3622;
-      }
-      .status-ligada .card-title {
-        color: #0f5132;
-      }
-      .status-desligada {
-        background-color: #f8d7da;
-        border-color: #f1aeb5;
-        color: #58151c;
-      }
-      .status-desligada .card-title {
-        color: #842029;
-      }
+
       .card-sensor {
         cursor: pointer;
         transition: transform 0.2s ease-in-out;
@@ -256,34 +241,37 @@
               </div>
             </div>
           </div>
+
           <div class="col-lg col-md-6" id="colStatusBomba">
             <div class="card text-center h-100 shadow-sm" id="cardStatusBomba">
               <div
                 class="card-body p-3 p-md-4 d-flex flex-column justify-content-center"
               >
                 <h5 class="card-title text-warning">
-                  <i class="bi bi-power"></i> Status Bomba
+                  <i class="bi bi-power"></i> Controle Bomba
                 </h5>
-                <p class="card-value fs-1 fw-bold mb-0" id="statusBomba">--</p>
+                <p class="card-value fs-1 mb-3" id="statusBomba">--</p>
+                <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+                  <button
+                    class="btn btn-success btn-sm flex-fill"
+                    id="ligarBombaBtn"
+                  >
+                    <i class="bi bi-play-circle-fill"></i> LIGAR
+                  </button>
+                  <button
+                    class="btn btn-danger btn-sm flex-fill"
+                    id="desligarBombaBtn"
+                  >
+                    <i class="bi bi-stop-circle-fill"></i> DESLIGAR
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
+
         <div class="row g-4 mt-2">
-          <div class="col-lg-4">
-            <div class="card shadow-sm">
-              <div class="card-header bg-light fw-bold">Controle Manual</div>
-              <div class="card-body d-grid gap-3 p-4">
-                <button class="btn btn-success btn-lg" id="ligarBombaBtn">
-                  <i class="bi bi-play-circle-fill"></i> Ligar Irrigação
-                </button>
-                <button class="btn btn-danger btn-lg" id="desligarBombaBtn">
-                  <i class="bi bi-stop-circle-fill"></i> Desligar Irrigação
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="col-lg-8">
+          <div class="col-lg-12">
             <div class="card h-100 shadow-sm">
               <div class="card-header bg-light fw-bold">
                 Histórico Geral (Últimas 24 horas)
@@ -321,6 +309,7 @@
         </div>
       </div>
     </main>
+
     <div
       class="modal fade"
       id="modalAdicionarSistema"
