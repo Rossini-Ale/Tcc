@@ -71,6 +71,11 @@ document.addEventListener("DOMContentLoaded", () => {
   let sensorKeyAtualGraficoDetalhado = null;
   let sensorLabelAtualGraficoDetalhado = null;
 
+  // Seletores Barra Progresso (Sugestão 1)
+  const colEtcAcumuladoEl = document.getElementById("colEtcAcumulado");
+  const valorEtcAcumuladoEl = document.getElementById("valorEtcAcumulado");
+  const barraProgressoEtcEl = document.getElementById("barraProgressoEtc");
+
   // Inicializa Modais (com verificação)
   try {
     if (modalAdicionarSistemaEl)
@@ -248,10 +253,12 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     carregarDadosAtuais(sistemaId);
-    desenharGraficoHistorico(sistemaId, "1d");
+    // Chama o gráfico com o filtro selecionado (ou '1d' se nenhum)
+    const filtroAtivo = document.querySelector(
+      'input[name="intervaloGraficoPrincipal"]:checked'
+    );
+    desenharGraficoHistorico(sistemaId, filtroAtivo ? filtroAtivo.value : "1d");
     carregarHistoricoEventos(sistemaId);
-    // ***** CORREÇÃO: Linha abaixo REMOVIDA (Erro de Ref) *****
-    // adicionarListenersCards();
   }
   function limparDashboard() {
     [
@@ -261,10 +268,13 @@ document.addEventListener("DOMContentLoaded", () => {
       valorUmidadeArEl,
       statusBombaEl,
       detalhesETEl,
+      valorEtcAcumuladoEl, // Limpa novo card
     ].forEach((el) => {
       if (el) el.textContent = "--";
     });
     if (detalhesETEl) detalhesETEl.textContent = "mm/dia";
+    if (valorEtcAcumuladoEl) valorEtcAcumuladoEl.textContent = "-- / -- mm";
+    if (barraProgressoEtcEl) barraProgressoEtcEl.style.width = "0%";
     if (cardStatusBombaEl)
       cardStatusBombaEl.classList.remove("status-ligada", "status-desligada");
     [
@@ -273,6 +283,7 @@ document.addEventListener("DOMContentLoaded", () => {
       "colET",
       "colETc",
       "colUmidadeAr",
+      "colEtcAcumulado", // Esconde novo card
     ].forEach((id) => document.getElementById(id)?.classList.add("d-none"));
     if (document.getElementById("colStatusBomba"))
       document.getElementById("colStatusBomba").classList.remove("d-none");
@@ -374,8 +385,6 @@ document.addEventListener("DOMContentLoaded", () => {
           "status-ligada",
           "status-desligada"
         );
-        // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
-        // adicionarListenersCards();
         return;
       }
 
@@ -407,6 +416,45 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("detalhesETc")
       );
       if (colETc) colETc.classList.add("d-none"); // Garante que fica oculto
+
+      // --- LÓGICA DA BARRA DE PROGRESSO (NOVA) ---
+      if (
+        colEtcAcumuladoEl &&
+        valorEtcAcumuladoEl &&
+        barraProgressoEtcEl &&
+        dados.etcAcumulado !== undefined &&
+        dados.etcLimite !== undefined
+      ) {
+        const acumulado = parseFloat(dados.etcAcumulado);
+        const limite = parseFloat(dados.etcLimite);
+
+        if (limite > 0) {
+          const percentual = Math.max(
+            0,
+            Math.min((acumulado / limite) * 100, 100)
+          );
+
+          valorEtcAcumuladoEl.textContent = `${acumulado.toFixed(
+            2
+          )} / ${limite.toFixed(1)} mm`;
+          barraProgressoEtcEl.style.width = `${percentual}%`;
+          barraProgressoEtcEl.setAttribute("aria-valuenow", percentual);
+
+          // Tira a animação se estiver cheio
+          if (percentual >= 100) {
+            barraProgressoEtcEl.classList.remove("progress-bar-animated");
+          } else {
+            barraProgressoEtcEl.classList.add("progress-bar-animated");
+          }
+
+          colEtcAcumuladoEl.classList.remove("d-none");
+        } else {
+          colEtcAcumuladoEl.classList.add("d-none"); // Esconde se o limite for 0
+        }
+      } else if (colEtcAcumuladoEl) {
+        colEtcAcumuladoEl.classList.add("d-none"); // Esconde se faltar dados
+      }
+      // --- FIM DA LÓGICA DA BARRA ---
 
       // Status da Bomba
       colStatusBomba?.classList.remove("d-none");
@@ -440,9 +488,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (ligarBtn) ligarBtn.classList.remove("disabled");
         if (desligarBtn) desligarBtn.classList.remove("disabled");
       }
-
-      // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
-      // adicionarListenersCards();
     } catch (error) {
       console.error("Erro carregar dados atuais:", error);
       [colUmidadeSolo, colTemperaturaAr, colET, colETc, colUmidadeAr].forEach(
@@ -460,8 +505,6 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       if (detalhesETEl) detalhesETEl.textContent = "mm/dia";
       cardStatusBombaEl?.classList.remove("status-ligada", "status-desligada");
-      // ***** CORREÇÃO: Linha abaixo REMOVIDA *****
-      // adicionarListenersCards();
     }
   }
 
@@ -519,7 +562,7 @@ document.addEventListener("DOMContentLoaded", () => {
             type: "time",
             grid: { display: false },
             time: {
-              tooltipFormat: intervalo === "1d" ? "HH:mm" : "dd/MM HH:mm",
+              tooltipFormat: "dd/MM HH:mm", // Formato mais consistente
               unit: intervalo === "1d" ? "hour" : "day",
               displayFormats: { hour: "HH:mm", day: "dd/MM" },
             },
@@ -630,7 +673,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Carregar eventos
+  // Carregar eventos (Sugestão 2 - COM ÍCONES)
   async function carregarHistoricoEventos(sistemaId) {
     if (!sistemaId || !tabelaEventosEl) return;
     tabelaEventosEl.innerHTML =
@@ -648,9 +691,27 @@ document.addEventListener("DOMContentLoaded", () => {
           dateStyle: "short",
           timeStyle: "short",
         });
-        const acao = ev.acao?.replace(/_/g, " ") || "N/A";
+
+        let acaoIcon = '<i class="bi bi-info-circle-fill text-secondary"></i>'; // Default
+        let acaoTexto = ev.acao?.replace(/_/g, " ") || "N/A";
+
+        if (acaoTexto.toLowerCase().includes("ligou")) {
+          acaoIcon = '<i class="bi bi-play-circle-fill text-success"></i>';
+        } else if (acaoTexto.toLowerCase().includes("desligou")) {
+          acaoIcon = '<i class="bi bi-stop-circle-fill text-danger"></i>';
+        }
+
         const motivo = ev.motivo || "--";
-        tabelaEventosEl.innerHTML += `<tr><td>${dataHora}</td><td class="text-capitalize">${acao.toLowerCase()}</td><td>${motivo}</td></tr>`;
+
+        tabelaEventosEl.innerHTML += `
+          <tr>
+            <td>${dataHora}</td>
+            <td class="fw-bold text-capitalize">
+              ${acaoIcon}
+              <span class="ms-2">${acaoTexto.toLowerCase()}</span>
+            </td>
+            <td>${motivo}</td>
+          </tr>`;
       });
     } catch (error) {
       console.error("Erro carregar eventos:", error);
@@ -1150,6 +1211,20 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
   });
+
+  // Listener Botões Intervalo Gráfico PRINCIPAL (Sugestão 3)
+  document
+    .getElementById("intervaloGraficoPrincipalBtns")
+    ?.addEventListener("change", (event) => {
+      if (
+        event.target.type === "radio" &&
+        event.target.name === "intervaloGraficoPrincipal" &&
+        sistemaIdAtivo
+      ) {
+        // Chama a função de desenhar o gráfico principal com o novo valor
+        desenharGraficoHistorico(sistemaIdAtivo, event.target.value);
+      }
+    });
 
   // Listener Botões Intervalo Gráfico Detalhado
   intervaloGraficoBtnsEl?.addEventListener("change", (event) => {

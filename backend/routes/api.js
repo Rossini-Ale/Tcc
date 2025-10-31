@@ -5,6 +5,9 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const axios = require("axios"); // <-- ADICIONADO
 
+// !!! IMPORTANTE: COPIADO DO syncservice.js !!!
+const IRRIGATION_THRESHOLD_MM = 5.0; // <-- AJUSTE AQUI (Ex: Irrigar quando acumular 5mm)
+
 function toCamelCase(str) {
   if (!str) return "";
   return str
@@ -420,17 +423,15 @@ router.post("/sistemas/:sistemaId/comando", async (req, res) => {
 });
 
 // -- Dados Atuais --
-// ############################################################
-// ##               INÍCIO DA SEÇÃO CORRIGIDA                ##
-// ############################################################
+// ===== ROTA /DADOS-ATUAIS MODIFICADA =====
 router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
   try {
     const { sistemaId } = req.params;
     const usuario_id = req.usuario.id; // Autenticado
 
-    // Verifica se o sistema pertence ao usuário E pega o comando atual
+    // Verifica se o sistema pertence ao usuário E pega o comando E o timestamp da última rega
     const [[sistemaStatus]] = await pool.query(
-      "SELECT id, comando_irrigacao FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
+      "SELECT id, comando_irrigacao, last_etc_irrigation_timestamp FROM Sistemas_Irrigacao WHERE id = ? AND usuario_id = ?",
       [sistemaId, usuario_id]
     );
     if (!sistemaStatus) {
@@ -474,6 +475,22 @@ router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
 
     // Adiciona o status da bomba
     dadosFormatados.statusBomba = sistemaStatus.comando_irrigacao;
+
+    // --- CÁLCULO DE ETc ACUMULADO (NOVA LÓGICA) ---
+    const inicioAcumulacao = sistemaStatus.last_etc_irrigation_timestamp
+      ? new Date(sistemaStatus.last_etc_irrigation_timestamp)
+      : new Date(0);
+
+    const [etcSum] = await pool.query(
+      `SELECT SUM(valor_etc_calculado) as etc_acumulado
+       FROM Calculos_ETc
+       WHERE sistema_id = ? AND timestamp_calculo > ?`,
+      [sistemaId, inicioAcumulacao]
+    );
+
+    dadosFormatados.etcAcumulado = etcSum[0].etc_acumulado || 0;
+    dadosFormatados.etcLimite = IRRIGATION_THRESHOLD_MM;
+    // --- FIM DA NOVA LÓGICA ---
 
     // Busca informações básicas do sistema (ET0, data plantio, ID cultura)
     const [[sistemaInfoBase]] = await pool.query(
@@ -641,9 +658,6 @@ router.get("/sistemas/:sistemaId/dados-atuais", async (req, res) => {
     res.status(500).json({ message: "Erro ao buscar dados atuais." });
   }
 });
-// ############################################################
-// ##                 FIM DA SEÇÃO CORRIGIDA                 ##
-// ############################################################
 
 // -- Eventos de Irrigação --
 router.get("/sistemas/:sistemaId/eventos", async (req, res) => {
